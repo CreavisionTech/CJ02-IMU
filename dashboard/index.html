@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMU ESKF · 三轴姿态</title>
+<style>
+  :root{
+    --bg:#f4f6f9;
+    --card:#ffffff;
+    --line:#e6e9ef;
+    --line-2:#f1f3f7;
+    --txt:#0f172a;
+    --txt-2:#5b6573;
+    --txt-3:#9aa3b3;
+    --roll:#0891b2;    /* teal */
+    --pitch:#2563eb;   /* blue */
+    --yaw:#e11d48;     /* rose */
+    --accent:#0891b2;  /* teal accent (buttons/mark) */
+    --ok:#16a34a;
+    --bad:#dc2626;
+    --radius:14px;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:var(--sans);color:var(--txt);min-height:100vh;background:var(--bg);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+  }
+  .app{max-width:1240px;margin:0 auto;padding:24px 24px 48px}
+
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;gap:16px;
+    padding:16px 20px;border-radius:var(--radius);background:var(--card);
+    border:1px solid var(--line);margin-bottom:18px;flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand .mark{
+    width:34px;height:34px;border-radius:9px;flex:none;display:grid;place-items:center;
+    background:var(--accent);
+  }
+  .brand .mark svg{width:20px;height:20px}
+  .brand .t1{font-weight:600;font-size:1.02rem;letter-spacing:.1px}
+  .brand .t2{font-size:.73rem;color:var(--txt-3);font-family:var(--mono);margin-top:1px}
+  .conn{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .pill{
+    display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;
+    font-size:.8rem;background:var(--card);border:1px solid var(--line);color:var(--txt-2);font-family:var(--mono);
+  }
+  .pill .ind{width:7px;height:7px;border-radius:50%;background:var(--txt-3)}
+  .pill.live{color:#14532d;background:#f0fdf4;border-color:#bbf7d0}
+  .pill.live .ind{background:var(--ok);animation:pulse 1.6s infinite}
+  .pill.err{color:#7f1d1d;background:#fef2f2;border-color:#fecaca}
+  .pill.err .ind{background:var(--bad)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(22,163,106,.45)}70%{box-shadow:0 0 0 6px rgba(22,163,106,0)}100%{box-shadow:0 0 0 0 rgba(22,163,106,0)}}
+  select,button,input{font-family:var(--sans);color:var(--txt)}
+  select{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-size:.83rem;cursor:pointer;outline:none}
+  select:focus{border-color:#c4b5fd}
+  button{padding:9px 18px;border-radius:10px;border:none;cursor:pointer;font-size:.85rem;font-weight:600;transition:filter .15s}
+  #connectBtn{background:var(--accent);color:#fff}
+  #connectBtn:hover{filter:brightness(1.08)}
+  #connectBtn.on{background:var(--bad)}
+
+  .grid{display:grid;grid-template-columns:minmax(300px,1fr) 1.4fr;gap:18px}
+  @media(max-width:960px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;display:flex;flex-direction:column}
+  .card-h{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line-2)}
+  .card-h h2{font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;color:var(--txt-2);font-weight:600}
+  .chip-badge{font-family:var(--mono);font-size:.75rem;color:var(--accent);background:#ecfeff;border:1px solid #cffafe;padding:3px 9px;border-radius:7px}
+
+  .scene{width:100%;aspect-ratio:1/0.94;display:block}
+  .scene-legend{display:flex;gap:16px;flex-wrap:wrap;padding:10px 16px;border-top:1px solid var(--line-2);font-size:.73rem;color:var(--txt-2)}
+  .scene-legend .lg{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono)}
+  .scene-legend .sw{width:14px;height:2px;border-radius:2px}
+
+  .trace{min-height:420px}
+  .legend{display:flex;gap:7px;flex-wrap:wrap}
+  .leg{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;padding:5px 10px;border-radius:8px;border:1px solid var(--line);font-size:.75rem;color:var(--txt-2);transition:opacity .14s}
+  .leg .sw{width:9px;height:9px;border-radius:3px}
+  .leg.off{opacity:.35}
+  #chart{flex:1;width:100%;min-height:300px;display:block}
+  .trace-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 16px;border-top:1px solid var(--line-2);font-size:.73rem;color:var(--txt-3);font-family:var(--mono)}
+  .trace-foot button{padding:4px 10px;font-size:.73rem;border-radius:8px;background:var(--card);border:1px solid var(--line);color:var(--txt-2);font-weight:600}
+  .trace-foot button:hover{color:var(--txt);border-color:#67e8f9}
+
+  .chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-top:18px}
+  .chip{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 16px;position:relative}
+  .chip .lbl{font-size:.65rem;letter-spacing:.12em;text-transform:uppercase;color:var(--txt-3);margin-bottom:8px;font-weight:600}
+  .chip .v{font-family:var(--mono);font-weight:600;font-size:1.6rem;line-height:1;font-variant-numeric:tabular-nums;color:var(--txt)}
+  .chip .u{font-size:.82rem;color:var(--txt-3);margin-left:3px}
+  .chip.big .v{font-size:1.95rem}
+  .vrow{display:flex;align-items:baseline;gap:2px}
+  .chip.big::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;border-radius:0 3px 3px 0}
+  .chip.r::before{background:var(--roll)} .chip.r .v{color:var(--roll)}
+  .chip.p::before{background:var(--pitch)} .chip.p .v{color:var(--pitch)}
+  .chip.y::before{background:var(--yaw)} .chip.y .v{color:var(--yaw)}
+  .tag{display:inline-block;margin-top:9px;font-size:.7rem;font-family:var(--mono);padding:3px 9px;border-radius:7px;background:var(--card);color:var(--txt-2);border:1px solid var(--line)}
+  .tag.on{color:#14532d;background:#f0fdf4;border-color:#bbf7d0}
+  .tag.off{color:var(--txt-3)}
+  .freq{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .freq .gauge{width:44px;height:44px;flex:none}
+  .freq .gauge circle{fill:none;stroke-width:5}
+  .freq .gauge .bg{stroke:var(--line)}
+  .freq .gauge .fg{stroke:var(--accent);stroke-linecap:round;transform:rotate(-90deg);transform-origin:50% 50%;transition:stroke-dashoffset .25s}
+  .chip .small{font-size:.66rem;color:var(--txt-3);font-family:var(--mono);margin-top:2px}
+
+  .logcard{margin-top:18px}
+  .logcard .card-h button{background:var(--card);color:var(--txt-2);border:1px solid var(--line);padding:5px 11px;font-size:.74rem}
+  .log{background:#0b1020;color:#c7d0e0;padding:10px 14px;font-family:var(--mono);font-size:.75rem;max-height:140px;overflow:auto;border-top:1px solid var(--line-2)}
+  .log .e{padding:2px 0;color:#aab4c7}
+  .log .e .t{color:#5e6b85;margin-right:8px}
+  .log .e.error{color:#ff9b9b}.log .e.success{color:#86efac}.log .e.info{color:#9db4ff}
+  .hint{margin-top:16px;padding:13px 16px;font-size:.76rem;color:var(--txt-2);font-family:var(--mono);line-height:1.6;background:var(--card);border:1px solid var(--line);border-radius:12px}
+  .hint code{background:#ecfeff;padding:1px 6px;border-radius:5px;color:var(--accent)}
+  /* config button */
+  .cfg-btn{background:var(--card);color:var(--txt-2);border:1px solid var(--line);font-weight:600;padding:9px 14px}
+  .cfg-btn:hover{color:var(--accent);border-color:#67e8f9}
+  /* modal */
+  .modal-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);backdrop-filter:blur(4px);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px}
+  .modal-overlay[hidden]{display:none}
+  .modal{background:var(--card);border-radius:16px;max-width:560px;width:100%;max-height:85vh;overflow:auto;box-shadow:0 24px 60px -20px rgba(15,23,42,.4)}
+  .modal-h{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line-2)}
+  .modal-h h3{font-size:.9rem;font-weight:700}
+  .cfg-close{background:transparent;border:none;font-size:1.1rem;color:var(--txt-3);cursor:pointer;padding:4px 8px}
+  .cfg-close:hover{color:var(--bad)}
+  .modal-body{padding:16px 20px}
+  .cfg-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+  @media(max-width:520px){.cfg-grid{grid-template-columns:1fr}}
+  .cfg-row{display:flex;flex-direction:column;gap:3px}
+  .cfg-row label{font-size:.7rem;color:var(--txt-2);font-family:var(--mono)}
+  .cfg-row input{padding:7px 10px;border:1px solid var(--line);border-radius:8px;font-size:.82rem;font-family:var(--mono);color:var(--txt);background:var(--bg);outline:none}
+  .cfg-row input:focus{border-color:#67e8f9}
+  .cfg-actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+  .cfg-save{background:var(--accent);color:#fff;border:none;padding:10px 20px;border-radius:10px;font-weight:600;cursor:pointer}
+  .cfg-save:hover{filter:brightness(1.08)}
+  .cfg-reset{background:var(--card);color:var(--bad);border:1px solid var(--line);padding:10px 18px;border-radius:10px;font-weight:600;cursor:pointer}
+  .cfg-reset:hover{border-color:var(--bad)}
+  .cfg-refresh{background:var(--card);color:var(--txt-2);border:1px solid var(--line);padding:10px 18px;border-radius:10px;font-weight:600;cursor:pointer}
+  .cfg-refresh:hover{color:var(--txt)}
+  .cfg-note{margin-top:12px;font-size:.72rem;color:var(--txt-3);font-family:var(--mono);line-height:1.5}
+  /* raw data chips */
+  .chip .v.sm{font-size:1.1rem}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"/></svg></div>
+      <div>
+        <div class="t1">IMU ESKF 三轴姿态</div>
+        <div class="t2">0xAB · roll / pitch / yaw (float32°)</div>
+      </div>
+    </div>
+    <div class="conn">
+      <span class="pill" id="status"><i class="ind"></i><span id="statusTxt">未连接</span></span>
+      <select id="baudRate">
+        <option value="460800" selected>460800</option>
+        <option value="921600">921600</option>
+        <option value="230400">230400</option>
+        <option value="115200">115200</option>
+      </select>
+      <button id="connectBtn">连接串口</button>
+      <button id="configBtn" class="cfg-btn">⚙ 配置</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <div class="card-h"><h2>三轴姿态 · 3D</h2><span class="chip-badge" id="hdgBadge">N 000°</span></div>
+      <canvas id="scene" class="scene"></canvas>
+      <div class="scene-legend">
+        <span class="lg"><i class="sw" style="background:var(--roll)"></i>Roll (X)</span>
+        <span class="lg"><i class="sw" style="background:var(--pitch)"></i>Pitch (Y)</span>
+        <span class="lg"><i class="sw" style="background:var(--yaw)"></i>Yaw (Z)</span>
+        <span class="lg"><i class="sw" style="background:#94a3b8"></i>北向 / 地面</span>
+      </div>
+    </section>
+
+    <section class="card trace">
+      <div class="card-h">
+        <h2>姿态曲线</h2>
+        <div class="legend" id="legend">
+          <span class="leg" data-k="r"><i class="sw" style="background:var(--roll)"></i>Roll</span>
+          <span class="leg" data-k="p"><i class="sw" style="background:var(--pitch)"></i>Pitch</span>
+          <span class="leg" data-k="y"><i class="sw" style="background:var(--yaw)"></i>Yaw</span>
+        </div>
+      </div>
+      <canvas id="chart"></canvas>
+      <div class="trace-foot"><span id="rangeLbl">量程 ±180°</span><button id="rangeBtn">切换量程</button></div>
+    </section>
+  </main>
+
+  <section class="chips">
+    <div class="chip big r"><div class="lbl">Roll</div><div class="vrow"><span class="v" id="roll">0.00</span><span class="u">°</span></div></div>
+    <div class="chip big p"><div class="lbl">Pitch</div><div class="vrow"><span class="v" id="pitch">0.00</span><span class="u">°</span></div></div>
+    <div class="chip big y"><div class="lbl">Yaw</div><div class="vrow"><span class="v" id="yaw">0.00</span><span class="u">°</span></div></div>
+    <div class="chip"><div class="lbl">ESKF 模式</div><div class="v" id="eskfMode" style="font-size:1.1rem">—</div><span class="tag off" id="modeTag">等待</span></div>
+    <div class="chip"><div class="lbl">加速度计</div><span class="tag off" id="accelUsed">未使用</span></div>
+    <div class="chip"><div class="lbl">ZARU</div><span class="tag off" id="zaruUsed">未使用</span></div>
+    <div class="chip"><div class="lbl">静止检测</div><span class="tag off" id="isStatic">运动</span></div>
+    <div class="chip freq"><div><div class="lbl">输出频率</div><div class="v" id="frequency">0</div><div class="small">/ 800 Hz</div></div><svg class="gauge" viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="16"/><circle class="fg" id="freqArc" cx="22" cy="22" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg></div>
+    <div class="chip"><div class="lbl">序列号 seq</div><div class="v" id="seq" style="font-size:1.3rem">0</div></div>
+    <div class="chip"><div class="lbl">坏帧 / 丢包</div><div class="v" id="badCount" style="font-size:1.3rem;color:var(--bad)">0</div></div>
+    <div class="chip"><div class="lbl">外部同步触发</div><div class="v" id="syncCount" style="font-size:1.3rem;color:var(--accent)">0</div><div class="small" id="syncInfo">等待 INT2</div></div>
+  </section>
+
+  <section class="chips">
+    <div class="chip"><div class="lbl">Acc X (mg)</div><div class="v" id="accX" style="font-size:1.2rem">0</div></div>
+    <div class="chip"><div class="lbl">Acc Y (mg)</div><div class="v" id="accY" style="font-size:1.2rem">0</div></div>
+    <div class="chip"><div class="lbl">Acc Z (mg)</div><div class="v" id="accZ" style="font-size:1.2rem">0</div></div>
+    <div class="chip"><div class="lbl">Gyr X (°/s)</div><div class="v" id="gyrX" style="font-size:1.2rem">0.0</div></div>
+    <div class="chip"><div class="lbl">Gyr Y (°/s)</div><div class="v" id="gyrY" style="font-size:1.2rem">0.0</div></div>
+    <div class="chip"><div class="lbl">Gyr Z (°/s)</div><div class="v" id="gyrZ" style="font-size:1.2rem">0.0</div></div>
+  </section>
+
+  <section class="card logcard">
+    <div class="card-h"><h2>日志</h2><button id="logToggle">展开 ▾</button></div>
+    <div class="log" id="log" hidden></div>
+  </section>
+
+  <div class="hint">
+    Chrome / Edge 打开本页 → <code>连接串口</code> → 选 COM 口 → 波特率与固件一致（默认 <code>460800</code>）。固件经 USART1(PA2) 以 DMA 输出 0xAA 原始帧 + 0xAB 姿态帧，目标 800 Hz。点 <code>⚙ 配置</code> 查看/修改 ESKF 参数与触发输出。
+  </div>
+
+  <!-- config modal -->
+  <div class="modal-overlay" id="configModal" hidden>
+    <div class="modal">
+      <div class="modal-h"><h3>ESKF 参数配置</h3><button id="cfgClose" class="cfg-close">✕</button></div>
+      <div class="modal-body">
+        <div id="cfgFields" class="cfg-grid"></div>
+        <div class="cfg-actions">
+          <button id="cfgSave" class="cfg-save">保存到 Flash</button>
+          <button id="cfgReset" class="cfg-reset">恢复默认</button>
+          <button id="cfgRefresh" class="cfg-refresh">重新读取</button>
+        </div>
+        <div class="cfg-note">修改后点「保存到 Flash」下发固件并持久化（断电不丢）。触发输出在 PA0，分频=1600/频率（如 80→20Hz），占空比=高电平时间百分比。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const els = {
+  connectBtn:document.getElementById('connectBtn'),
+  status:document.getElementById('status'),
+  statusTxt:document.getElementById('statusTxt'),
+  baudRate:document.getElementById('baudRate'),
+  scene:document.getElementById('scene'),
+  chart:document.getElementById('chart'),
+  roll:document.getElementById('roll'), pitch:document.getElementById('pitch'), yaw:document.getElementById('yaw'),
+  hdgBadge:document.getElementById('hdgBadge'),
+  eskfMode:document.getElementById('eskfMode'), modeTag:document.getElementById('modeTag'),
+  accelUsed:document.getElementById('accelUsed'), zaruUsed:document.getElementById('zaruUsed'), isStatic:document.getElementById('isStatic'),
+  frequency:document.getElementById('frequency'), freqArc:document.getElementById('freqArc'),
+  seq:document.getElementById('seq'), badCount:document.getElementById('badCount'),
+  log:document.getElementById('log'), logToggle:document.getElementById('logToggle'),
+  rangeLbl:document.getElementById('rangeLbl'), rangeBtn:document.getElementById('rangeBtn'),
+  legend:document.getElementById('legend'),
+  configBtn:document.getElementById('configBtn'),
+  configModal:document.getElementById('configModal'),
+  cfgClose:document.getElementById('cfgClose'), cfgSave:document.getElementById('cfgSave'),
+  cfgReset:document.getElementById('cfgReset'), cfgRefresh:document.getElementById('cfgRefresh'),
+  accX:document.getElementById('accX'),accY:document.getElementById('accY'),accZ:document.getElementById('accZ'),
+  gyrX:document.getElementById('gyrX'),gyrY:document.getElementById('gyrY'),gyrZ:document.getElementById('gyrZ'),
+  syncCount:document.getElementById('syncCount'),syncInfo:document.getElementById('syncInfo'),
+};
+const SC=els.scene.getContext('2d'), CH=els.chart.getContext('2d');
+let dpr=Math.max(1,window.devicePixelRatio||1);
+const PI=Math.PI, cos=Math.cos, sin=Math.sin;
+const state={
+  connected:false, port:null, reader:null, writer:null, buffer:new Uint8Array(0),
+  latest:{roll:0,pitch:0,yaw:0,mode:0,flags:0,seq:0},
+  latestRaw:{acc:[0,0,0],gyr:[0,0,0],seq:0},
+  hist:{t:[],r:[],p:[],y:[],max:600},
+  frameTimes:[], frames:0, bad:0, freq:0,
+  rangeIdx:0, vis:{r:true,p:true,y:true}, decimate:0,
+  configFields:null,  // parsed config from GET_CONFIG reply
+  syncCount:0, latestSync:null,
+};
+const RANGES=[180,90,null], RANGE_NAMES=["±180°","±90°","自动"];
+const MODE_NAMES=["初始化","运行","无加速度","拒绝"], MODE_COLOR=["#f59e0b","#16a34a","#3b82f6","#dc2626"];
+const C={roll:"#0891b2",pitch:"#2563eb",yaw:"#e11d48"};
+
+function log(m,t='info'){
+  const e=document.createElement('div');e.className='e '+t;
+  e.innerHTML=`<span class="t">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span>${m}`;
+  els.log.appendChild(e);els.log.scrollTop=els.log.scrollHeight;
+  while(els.log.children.length>120) els.log.removeChild(els.log.firstChild);
+}
+
+/* ---------------- serial ---------------- */
+async function connect(){
+  if(state.connected){ await disconnect(); return; }
+  try{
+    state.port=await navigator.serial.requestPort();
+    const baud=parseInt(els.baudRate.value,10);
+    await state.port.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none'});
+    state.connected=true; state.frames=0; state.bad=0; state.frameTimes=[];
+    state.writer=state.port.writable.getWriter();
+    els.connectBtn.textContent='断开'; els.connectBtn.classList.add('on');
+    els.status.className='pill live'; els.statusTxt.textContent=`已连接 · ${baud}`;
+    log(`串口已连接，波特率 ${baud}`,'success'); readLoop(); getConfig();
+  }catch(err){
+    if(err&&err.name!=='NotFoundError'&&err.name!=='AbortError') log(`连接失败：${err.message}`,'error');
+    els.status.className='pill err'; els.statusTxt.textContent='连接失败';
+  }
+}
+async function disconnect(){
+  try{ if(state.reader){try{await state.reader.cancel();}catch(_){}state.reader=null;} if(state.writer){try{state.writer.releaseLock();}catch(_){}state.writer=null;} if(state.port){try{await state.port.close();}catch(_){}state.port=null;} }
+  catch(e){ log(`断开异常：${e.message}`,'error'); }
+  state.connected=false;
+  els.connectBtn.textContent='连接串口'; els.connectBtn.classList.remove('on');
+  els.status.className='pill'; els.statusTxt.textContent='未连接';
+  log('串口已断开','info');
+}
+async function readLoop(){
+  const reader=state.port.readable.getReader(); state.reader=reader;
+  try{ while(state.connected){ const {value,done}=await reader.read(); if(done)break; if(value&&value.length) process(value); } }
+  catch(e){ if(state.connected) log(`读取错误：${e.message}`,'error'); }
+  finally{ try{reader.releaseLock();}catch(_){} }
+}
+/* parse combined stream: 0xAA(16B raw) + 0xAB(20B attitude) + 0xAC(config reply) */
+function process(data){
+  const nb=new Uint8Array(state.buffer.length+data.length);
+  nb.set(state.buffer); nb.set(data,state.buffer.length); state.buffer=nb;
+  while(state.buffer.length>=1){
+    const b=state.buffer;
+    const sync=b[0];
+    let frameLen;
+    if(sync===0xAA) frameLen=16;
+    else if(sync===0xAB) frameLen=20;
+    else if(sync===0xAD) frameLen=22;
+    else if(sync===0xAC){
+      if(b.length<3) break;  /* need cmd+len */
+      const len=b[2];
+      frameLen=3+len+1;  /* sync+cmd+len+payload+checksum */
+    } else { state.buffer=b.slice(1); continue; }
+    if(b.length<frameLen) break;
+    const f=b.subarray(0,frameLen);
+    if(sync===0xAA){
+      let xor=0; for(let i=1;i<15;i++) xor^=f[i];
+      if(xor===f[15]){
+        const v=new DataView(f.buffer,f.byteOffset,16);
+        state.latestRaw={acc:[v.getInt16(1,true),v.getInt16(3,true),v.getInt16(5,true)],
+                         gyr:[v.getInt16(7,true),v.getInt16(9,true),v.getInt16(11,true)],
+                         seq:v.getUint16(13,true)};
+        state.buffer=b.slice(frameLen);   /* good: advance past frame */
+      }else{
+        state.bad++;
+        state.buffer=b.slice(1);          /* bad: advance only 1 byte to re-sync */
+      }
+    } else if(sync===0xAB){
+      let xor=0; for(let i=1;i<19;i++) xor^=f[i];
+      if(xor===f[19]){
+        const v=new DataView(f.buffer,f.byteOffset,20);
+        state.latest={roll:v.getFloat32(1,true),pitch:v.getFloat32(5,true),yaw:v.getFloat32(9,true),mode:f[17],flags:f[18],seq:v.getUint32(13,true)};
+        state.frames++;
+        if((state.decimate++%5)===0){
+          const t=performance.now(),h=state.hist,M=h.max;
+          h.t.push(t); h.r.push(state.latest.roll); h.p.push(state.latest.pitch); h.y.push(state.latest.yaw);
+          if(h.t.length>M){h.t.shift();h.r.shift();h.p.shift();h.y.shift();}
+        }
+        state.frameTimes.push(performance.now());
+        state.buffer=b.slice(frameLen);   /* good: advance past frame */
+      }else{
+        state.bad++;
+        state.buffer=b.slice(1);          /* bad: advance only 1 byte to re-sync */
+      }
+    } else if(sync===0xAD){
+      let xor=0; for(let i=1;i<21;i++) xor^=f[i];
+      if(xor===f[21]){
+        const v=new DataView(f.buffer,f.byteOffset,22);
+        state.latestSync={
+          triggerSeq:v.getUint32(1,true),
+          roll:v.getFloat32(5,true), pitch:v.getFloat32(9,true), yaw:v.getFloat32(13,true),
+          attSeq:v.getUint32(17,true),
+          time:performance.now()
+        };
+        state.syncCount++;
+        log(`SYNC 触发 #${state.syncCount} @sample=${state.latestSync.triggerSeq} att=${state.latestSync.attSeq} R=${state.latestSync.roll.toFixed(1)}° P=${state.latestSync.pitch.toFixed(1)}° Y=${state.latestSync.yaw.toFixed(1)}°`,'success');
+        state.buffer=b.slice(frameLen);
+      }else{
+        state.bad++;
+        state.buffer=b.slice(1);
+      }
+    } else if(sync===0xAC){
+      handleReply(f);
+      state.buffer=b.slice(frameLen);
+    }
+  }
+}
+
+/* ---------------- config command protocol (0xAC) ---------------- */
+const CONFIG_FIELDS=[
+  {key:'gyro_tilt_std_1s_deg',type:'f',label:'陀螺倾角噪声 (deg/s/√Hz)',def:0.3,step:0.01},
+  {key:'sigma_gyro_bias',type:'f',label:'陀螺零偏漂移 (rad/s²)',def:3e-4,step:1e-5},
+  {key:'gyro_scale_factor_error',type:'f',label:'陀螺比例因子误差',def:0.01,step:0.001},
+  {key:'accel_variance_base',type:'f',label:'加速度计基础方差',def:5e-2,step:1e-3},
+  {key:'accel_g_3sigma',type:'f',label:'加速度 3σ (g)',def:0.1,step:0.01},
+  {key:'accel_release_tau',type:'f',label:'加速度释放 τ (s)',def:0.3,step:0.01},
+  {key:'nis_reject',type:'f',label:'NIS 拒绝阈值',def:50,step:1},
+  {key:'nis_inflate_gamma',type:'f',label:'NIS 膨胀 γ',def:6,step:0.1},
+  {key:'zaru_variance',type:'f',label:'ZARU 方差',def:5e-4,step:1e-5},
+  {key:'static_gyro_threshold',type:'f',label:'静止陀螺阈值 (rad/s)',def:0.05236,step:1e-4},
+  {key:'static_accel_rel_std_thresh',type:'f',label:'静止加速度相对标准差',def:0.026,step:1e-4},
+  {key:'motion_gyro_full',type:'f',label:'运动陀螺满量程 (rad/s)',def:0.34907,step:1e-3},
+  {key:'motion_accel_full',type:'f',label:'运动加速度满量程 (g)',def:0.30,step:0.01},
+  {key:'initialization_tilt_seconds',type:'f',label:'初始化倾斜时间 (s)',def:0.5,step:0.05},
+  {key:'initial_attitude_variance',type:'f',label:'初始姿态方差',def:0.001218,step:1e-5},
+  {key:'initial_bias_variance',type:'f',label:'初始零偏方差',def:2.5e-5,step:1e-6},
+  {key:'maximum_delta_seconds',type:'f',label:'最大 dt (s)',def:0.05,step:0.005},
+  {key:'zaru_static_frames',type:'u',label:'ZARU 静止帧数',def:300,step:10},
+  {key:'motion_window_length',type:'u',label:'运动检测窗口',def:200,step:10},
+  {key:'trigger_divider',type:'u16',label:'触发分频 (0=关, 80=20Hz)',def:80,step:1},
+  {key:'trigger_duty',type:'u16',label:'触发占空比 (%)',def:20,step:1},
+];
+
+function parseConfigPayload(payload){
+  const dv=new DataView(payload.buffer,payload.byteOffset,payload.length);
+  const cfg={}; let off=0;
+  for(const f of CONFIG_FIELDS){
+    if(f.type==='f') cfg[f.key]=dv.getFloat32(off,true);
+    else if(f.type==='u') cfg[f.key]=dv.getUint32(off,true);
+    else if(f.type==='u16') cfg[f.key]=dv.getUint16(off,true);
+    off += (f.type==='u16')?2:4;
+  }
+  return cfg;
+}
+
+function buildConfigPayload(cfg){
+  const buf=new ArrayBuffer(80);
+  const dv=new DataView(buf); let off=0;
+  for(const f of CONFIG_FIELDS){
+    const val=cfg[f.key] ?? f.def;
+    if(f.type==='f') dv.setFloat32(off, val, true);
+    else if(f.type==='u') dv.setUint32(off, val, true);
+    else if(f.type==='u16') dv.setUint16(off, val, true);
+    off += (f.type==='u16')?2:4;
+  }
+  return new Uint8Array(buf);
+}
+
+function handleReply(f){
+  const cmd=f[1], len=f[2], payload=f.subarray(3,3+len);
+  let xor=cmd^len; for(let i=0;i<len;i++) xor^=payload[i];
+  if(xor!==f[3+len]) { log('配置回复校验错误','error'); return; }
+  if(cmd===0x01){  // GET_CONFIG reply
+    const status=payload[0];
+    if(status===1 && len===81){
+      state.configFields=parseConfigPayload(payload.subarray(1));
+      populateConfigModal(state.configFields);
+      log('已读取固件配置','success');
+    }
+  } else if(cmd===0x02){  // SET_CONFIG reply
+    const ok=payload[0]===1;
+    log(ok?'配置已保存到 Flash':'配置保存失败', ok?'success':'error');
+    if(ok) getConfig();  // re-read to confirm
+  } else if(cmd===0x03){  // RESET_CONFIG reply
+    const ok=payload[0]===1;
+    log(ok?'已恢复默认配置':'恢复失败', ok?'success':'error');
+    if(ok) getConfig();
+  }
+}
+
+async function sendCommand(cmd, payload){
+  if(!state.writer) { log('未连接串口','error'); return; }
+  const len=payload?payload.length:0;
+  const buf=new Uint8Array(3+len+1);
+  buf[0]=0xAC; buf[1]=cmd; buf[2]=len;
+  if(payload) buf.set(payload,3);
+  let xor=cmd^len; for(let i=0;i<len;i++) xor^=payload[i];
+  buf[3+len]=xor;
+  try{ await state.writer.write(buf); }catch(e){ log(`发送失败：${e.message}`,'error'); }
+}
+
+async function getConfig(){ if(state.connected) await sendCommand(0x01); }
+async function setConfig(cfg){ await sendCommand(0x02, buildConfigPayload(cfg)); }
+async function resetConfig(){ await sendCommand(0x03); }
+
+function populateConfigModal(cfg){
+  const container=document.getElementById('cfgFields');
+  if(!container) return;
+  container.innerHTML='';
+  for(const f of CONFIG_FIELDS){
+    const row=document.createElement('div'); row.className='cfg-row';
+    const lab=document.createElement('label'); lab.textContent=f.label;
+    const inp=document.createElement('input'); inp.type='number'; inp.step=f.step;
+    inp.value=cfg[f.key] ?? f.def; inp.dataset.key=f.key;
+    row.appendChild(lab); row.appendChild(inp); container.appendChild(row);
+  }
+}
+
+function readConfigFromModal(){
+  const cfg={};
+  for(const inp of document.querySelectorAll('#cfgFields input')){
+    cfg[inp.dataset.key]=parseFloat(inp.value);
+  }
+  return cfg;
+}
+
+/* ---------------- 3D scene (clean wireframe) ---------------- */
+const VYAW=-30*PI/180, VPITCH=34*PI/180;
+const cVY=cos(VYAW),sVY=sin(VYAW), cVP=cos(VPITCH),sVP=sin(VPITCH);
+let CX,CY,UNIT,D=4.4;
+function vrot(x,y,z){ let x1=x*cVY-y*sVY,y1=x*sVY+y*cVY,z1=z; let y2=y1*cVP-z1*sVP,z2=y1*sVP+z1*cVP; return [x1,y2,z2]; }
+function b2w(bx,by,bz,r,p,y){
+  let cR=cos(r),sR=sin(r); let y1=by*cR-bz*sR,z1=by*sR+bz*cR,x1=bx;
+  let cP=cos(p),sP=sin(p); let x2=x1*cP+z1*sP,z2=-x1*sP+z1*cP,y2=y1;
+  let cY=cos(y),sY=sin(y); return [x2*cY-y2*sY, x2*sY+y2*cY, z2];
+}
+function proj(v){ const den=D+v[1]; if(den<0.35)return null; const sc=(D/den)*UNIT; return [CX+v[0]*sc, CY-v[2]*sc, v[1]]; }
+function w2s(p){ return proj(vrot(p[0],p[1],p[2])); }
+function b2s(b,r,p,y){ return proj(vrot.apply(null,b2w(b[0],b[1],b[2],r,p,y))); }
+
+function drawScene(roll,pitch,yaw){
+  const W=els.scene._w, H=els.scene._h;
+  SC.setTransform(dpr,0,0,dpr,0,0); SC.clearRect(0,0,W,H);
+  CX=W/2; CY=H/2+H*0.05; UNIT=Math.min(W,H)*0.285;
+  const R=roll*PI/180, P=pitch*PI/180, Y=yaw*PI/180;
+  const vdepth=b=>vrot.apply(null,b2w(b[0],b[1],b[2],R,P,Y))[1];
+
+  /* ---- helpers ---- */
+  // plain quad path (no rounded corners -> no stray arcTo geometry lines while rotating)
+  const polyPath=(pts)=>{ if(!pts.every(p=>p))return false; SC.beginPath(); pts.forEach((p,i)=>i?SC.lineTo(p[0],p[1]):SC.moveTo(p[0],p[1])); SC.closePath(); return true; };
+  const fillQ=(pts,fill)=>{ if(polyPath(pts)){ SC.fillStyle=fill; SC.fill(); } };
+  const strokeQ=(pts,stroke,w)=>{ if(polyPath(pts)){ SC.strokeStyle=stroke; SC.lineWidth=w; SC.stroke(); } };
+  const ls=(a,b,col,w)=>{ if(!a||!b)return; SC.strokeStyle=col;SC.lineWidth=w;SC.lineCap='round'; SC.beginPath();SC.moveTo(a[0],a[1]);SC.lineTo(b[0],b[1]);SC.stroke(); };
+
+  /* ---- ground: sparse grid + axes ---- */
+  const G=1.5, st=0.5;
+  for(let i=-G;i<=G+0.001;i+=st){
+    const on=Math.abs(i)<0.001, col=on?'rgba(100,116,139,.30)':'rgba(148,163,184,.18)';
+    const a=w2s([i,-G,0]),b=w2s([i,G,0]),c=w2s([-G,i,0]),d=w2s([G,i,0]);
+    SC.strokeStyle=col;SC.lineWidth=on?1.1:1;
+    if(a&&b){SC.beginPath();SC.moveTo(a[0],a[1]);SC.lineTo(b[0],b[1]);SC.stroke();}
+    if(c&&d){SC.beginPath();SC.moveTo(c[0],c[1]);SC.lineTo(d[0],d[1]);SC.stroke();}
+  }
+  // world North tick
+  const n0=w2s([0,1.22,0]), n1=w2s([0,1.62,0]);
+  if(n0&&n1){ ls(n0,n1,'rgba(100,116,139,.5)',1.6); SC.fillStyle='rgba(100,116,139,.8)';SC.font='700 11px ui-monospace,monospace';SC.textAlign='center';SC.textBaseline='middle';SC.fillText('N',n1[0],n1[1]-11); }
+
+  /* ---- board: frosted-glass translucent teal box with thickness ---- */
+  const HX=0.92, HY=0.66, THK=0.14;
+  const top=[[-HX,-HY, THK/2],[ HX,-HY, THK/2],[ HX, HY, THK/2],[-HX, HY, THK/2]];
+  const bot=[[-HX,-HY,-THK/2],[ HX,-HY,-THK/2],[ HX, HY,-THK/2],[-HX, HY,-THK/2]];
+  const ts=top.map(c=>b2s(c,R,P,Y)), bs=bot.map(c=>b2s(c,R,P,Y));
+  const dT=top.map(vdepth), dB=bot.map(vdepth);
+  // depth-sort key for a side wall = avg of its 4 corners
+  const items=[];
+  // frosted glass: very light translucent teal, crisp teal outline
+  const G_TOP='rgba(8,145,178,0.13)';     // frosted top
+  const G_SIDE='rgba(8,145,178,0.20)';    // slightly denser sides
+  const G_EDGE='rgba(8,145,178,0.75)';    // crisp teal outline
+  // 4 side walls
+  for(let i=0;i<4;i++){
+    const j=(i+1)%4;
+    const z=(dT[i]+dT[j]+dB[i]+dB[j])/4;
+    items.push({z, fn:()=>{ fillQ([ts[i],ts[j],bs[j],bs[i]], G_SIDE); }});
+  }
+  // top face (frosted translucent + teal outline)
+  items.push({z:Math.max(...dT)+0.001, fn:()=>{
+    fillQ(ts, G_TOP);
+    strokeQ(ts, G_EDGE, 1.6);
+  }});
+  // in-board chip (kept, lighter to match frosted theme)
+  items.push({z:Math.max(...dT)+0.002, fn:()=>{
+    const chip=[[-0.18,-0.18,THK/2],[0.18,-0.18,THK/2],[0.18,0.18,THK/2],[-0.18,0.18,THK/2]].map(c=>b2s(c,R,P,Y));
+    fillQ(chip, 'rgba(37,99,235,0.30)');
+    strokeQ(chip, 'rgba(147,197,253,0.7)', 1.2);
+    // chip pin dots
+    SC.fillStyle='rgba(8,145,178,0.8)';
+    for(let i=-2;i<=2;i++){ const p1=b2s([0.20, i*0.05, THK/2],R,P,Y); if(p1){SC.beginPath();SC.arc(p1[0],p1[1],1.3,0,2*PI);SC.fill();} const p2=b2s([-0.20, i*0.05, THK/2],R,P,Y); if(p2){SC.beginPath();SC.arc(p2[0],p2[1],1.3,0,2*PI);SC.fill();} }
+    // "IMU" text on board top
+    const ct=b2s([0,0.42,THK/2],R,P,Y);
+    if(ct){ SC.fillStyle='rgba(8,145,178,0.75)'; SC.font='700 9px ui-monospace,monospace'; SC.textAlign='center'; SC.textBaseline='middle'; SC.save(); SC.translate(ct[0],ct[1]); SC.fillText('IMU',0,0); SC.restore(); }
+  }});
+
+  /* ---- coordinate axes (body): Roll=teal, Pitch=blue, Yaw=rose ---- */
+  const AXIS=1.22;
+  const arrow=(b0,b1,col,label)=>items.push({z:vdepth(b1),fn:()=>drawArrow([b2s(b0,R,P,Y),b2s(b1,R,P,Y)],col,label)});
+  arrow([0,0,0],[AXIS,0,0],C.roll,'Roll');
+  arrow([0,0,0],[0,AXIS,0],C.pitch,'Pitch');
+  arrow([0,0,0],[0,0,AXIS],C.yaw,'Yaw');
+
+  /* paint back-to-front */
+  items.sort((a,b)=>b.z-a.z);
+  for(const it of items) it.fn();
+
+  /* origin marker */
+  const o=b2s([0,0,0],R,P,Y); if(o){ SC.fillStyle='#0f172a'; SC.beginPath(); SC.arc(o[0],o[1],2.6,0,2*PI); SC.fill(); SC.fillStyle='#fff'; SC.beginPath(); SC.arc(o[0],o[1],1.1,0,2*PI); SC.fill(); }
+
+  function drawArrow(pts,col,label){
+    const a=pts[0],b=pts[1]; if(!a||!b)return;
+    SC.strokeStyle=col;SC.fillStyle=col;SC.lineWidth=3;SC.lineCap='round';
+    SC.beginPath();SC.moveTo(a[0],a[1]);SC.lineTo(b[0],b[1]);SC.stroke();
+    const ang=Math.atan2(b[1]-a[1],b[0]-a[0]),hl=11;
+    SC.beginPath();SC.moveTo(b[0],b[1]);SC.lineTo(b[0]-hl*cos(ang-.42),b[1]-hl*sin(ang-.42));SC.lineTo(b[0]-hl*cos(ang+.42),b[1]-hl*sin(ang+.42));SC.closePath();SC.fill();
+    // endpoint dot for a designed look
+    SC.beginPath();SC.arc(b[0],b[1],2.8,0,2*PI);SC.fill();
+    SC.fillStyle='#fff';SC.beginPath();SC.arc(b[0],b[1],1.2,0,2*PI);SC.fill();SC.fillStyle=col;
+    if(label){ SC.font='700 11px ui-monospace,monospace'; SC.textAlign='left'; SC.textBaseline='middle'; SC.fillStyle=col; SC.fillText(label,b[0]+7,b[1]); }
+  }
+}
+
+/* ---------------- chart (clean lines, no glow) ---------------- */
+function drawChart(){
+  const W=els.chart._w,H=els.chart._h, padL=40,padR=14,padT=14,padB=24;
+  CH.setTransform(dpr,0,0,dpr,0,0); CH.clearRect(0,0,W,H); CH.fillStyle='#ffffff'; CH.fillRect(0,0,W,H);
+  const h=state.hist; let rmax=RANGES[state.rangeIdx];
+  if(rmax===null){ let mn=Infinity,mx=-Infinity; for(const arr of[h.r,h.p,h.y])for(const v of arr){if(v<mn)mn=v;if(v>mx)mx=v;} if(!isFinite(mn)){mn=-10;mx=10;} const pad=(mx-mn)*.14||10; mn-=pad;mx+=pad; rmax=Math.max(Math.abs(mn),Math.abs(mx)); }
+  const ymin=-rmax,ymax=rmax,x0=padL,x1=W-padR,y0=padT,y1=H-padB;
+  CH.strokeStyle='rgba(15,23,42,.06)';CH.lineWidth=1;CH.fillStyle='#9aa3b3';CH.font='10px ui-monospace,monospace';CH.textBaseline='middle';CH.textAlign='right';
+  for(let i=0;i<=4;i++){const y=y0+(y1-y0)*i/4,val=ymax-(ymax-ymin)*i/4;CH.beginPath();CH.moveTo(x0,y);CH.lineTo(x1,y);CH.stroke();CH.fillText(val.toFixed(0)+'°',x0-6,y);}
+  CH.textAlign='center';CH.textBaseline='top';
+  const span=h.t.length>1?(performance.now()-h.t[0]):0;
+  for(let i=0;i<=5;i++){const x=x0+(x1-x0)*i/5;CH.strokeStyle='rgba(15,23,42,.04)';CH.beginPath();CH.moveTo(x,y0);CH.lineTo(x,y1);CH.stroke();CH.fillStyle='#9aa3b3';CH.fillText('-'+(span*(1-i/5)/1000).toFixed(1)+'s',x,y1+5);}
+  if(ymin<0&&ymax>0){const y=y0+(y1-y0)*(ymax/(ymax-ymin));CH.strokeStyle='rgba(15,23,42,.14)';CH.lineWidth=1;CH.beginPath();CH.moveTo(x0,y);CH.lineTo(x1,y);CH.stroke();}
+  const yz=y0+(y1-y0)*(ymax/(ymax-ymin));
+  const draw=(arr,col,vis)=>{ if(!vis||arr.length<2)return; CH.beginPath();let stt=false; for(let i=0;i<arr.length;i++){const x=x0+(x1-x0)*i/(h.max-1),y=y0+(y1-y0)*(1-(arr[i]-ymin)/(ymax-ymin)); if(!stt){CH.moveTo(x,yz);CH.lineTo(x,y);stt=true;}else CH.lineTo(x,y);} const xe=x0+(x1-x0)*(arr.length-1)/(h.max-1);CH.lineTo(xe,yz);CH.closePath(); let fg=CH.createLinearGradient(0,y0,0,y1);fg.addColorStop(0,col+'14');fg.addColorStop(1,col+'00');CH.fillStyle=fg;CH.fill(); CH.strokeStyle=col;CH.lineWidth=2;CH.lineJoin='round';CH.beginPath(); for(let i=0;i<arr.length;i++){const x=x0+(x1-x0)*i/(h.max-1),y=y0+(y1-y0)*(1-(arr[i]-ymin)/(ymax-ymin));if(i===0)CH.moveTo(x,y);else CH.lineTo(x,y);} CH.stroke(); };
+  draw(h.r,C.roll,state.vis.r); draw(h.p,C.pitch,state.vis.p); draw(h.y,C.yaw,state.vis.y);
+}
+
+function updateFreqGauge(f){ const Cc=2*PI*16, frac=Math.max(0,Math.min(1,f/800)); els.freqArc.style.strokeDasharray=Cc.toFixed(2); els.freqArc.style.strokeDashoffset=(Cc*(1-frac)).toFixed(2); }
+function fmtTag(el,on,yes,no){ el.textContent=on?yes:no; el.className='tag '+(on?'on':'off'); }
+
+let rafId=null;
+function render(){
+  rafId=null; const L=state.latest;
+  els.roll.textContent=L.roll.toFixed(2); els.pitch.textContent=L.pitch.toFixed(2); els.yaw.textContent=L.yaw.toFixed(2);
+  els.seq.textContent=L.seq; els.badCount.textContent=state.bad;
+  const m=L.mode; els.eskfMode.textContent=MODE_NAMES[m]||'未知'; els.modeTag.textContent=m===1?'RUN':(m===0?'INIT':(m===2?'NO_ACC':'REJECT')); els.modeTag.className='tag '+(m===1?'on':'off'); els.eskfMode.style.color=MODE_COLOR[m]||'var(--txt)';
+  fmtTag(els.accelUsed,L.flags&1,'使用中','未使用'); fmtTag(els.zaruUsed,L.flags&2,'使用中','未使用'); fmtTag(els.isStatic,L.flags&4,'静止','运动');
+  const R=state.latestRaw;
+  els.accX.textContent=Math.round(R.acc[0]*1000/16384);
+  els.accY.textContent=Math.round(R.acc[1]*1000/16384);
+  els.accZ.textContent=Math.round(R.acc[2]*1000/16384);
+  els.gyrX.textContent=(R.gyr[0]/16.4).toFixed(1);
+  els.gyrY.textContent=(R.gyr[1]/16.4).toFixed(1);
+  els.gyrZ.textContent=(R.gyr[2]/16.4).toFixed(1);
+  /* sync trigger info */
+  els.syncCount.textContent=state.syncCount;
+  if(state.latestSync){
+    const dt=((performance.now()-state.latestSync.time)/1000).toFixed(1);
+    els.syncInfo.textContent=`sample #${state.latestSync.triggerSeq} · ${dt}s ago`;
+  }
+  const now=performance.now(); state.frameTimes=state.frameTimes.filter(t=>t>now-1000); state.freq=state.frameTimes.length; els.frequency.textContent=state.freq; updateFreqGauge(state.freq);
+  els.hdgBadge.textContent='N '+String(Math.round(((L.yaw%360)+360)%360)).padStart(3,'0')+'°';
+  drawScene(L.roll,L.pitch,L.yaw); drawChart(); schedule();
+}
+function schedule(){ if(rafId==null) rafId=requestAnimationFrame(render); }
+
+els.connectBtn.addEventListener('click',connect);
+els.rangeBtn.addEventListener('click',()=>{ state.rangeIdx=(state.rangeIdx+1)%RANGES.length; els.rangeLbl.textContent='量程 '+RANGE_NAMES[state.rangeIdx]; });
+els.legend.querySelectorAll('.leg').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.k;state.vis[k]=!state.vis[k];el.classList.toggle('off',!state.vis[k]);}));
+els.logToggle.addEventListener('click',()=>{const h=els.log.hasAttribute('hidden');if(h){els.log.removeAttribute('hidden');els.logToggle.textContent='收起 ▴';}else{els.log.setAttribute('hidden','');els.logToggle.textContent='展开 ▾';}});
+/* config modal */
+els.configBtn.addEventListener('click',()=>{
+  els.configModal.removeAttribute('hidden');
+  if(state.connected) getConfig(); else if(state.configFields) populateConfigModal(state.configFields);
+});
+els.cfgClose.addEventListener('click',()=>els.configModal.setAttribute('hidden',''));
+els.configModal.addEventListener('click',(e)=>{if(e.target===els.configModal)els.configModal.setAttribute('hidden','');});
+els.cfgSave.addEventListener('click',()=>{setConfig(readConfigFromModal());});
+els.cfgReset.addEventListener('click',()=>{resetConfig();});
+els.cfgRefresh.addEventListener('click',()=>{getConfig();});
+function resize(){ dpr=Math.max(1,window.devicePixelRatio||1); for(const cv of[els.scene,els.chart]){const r=cv.getBoundingClientRect();const w=Math.max(1,Math.floor(r.width)),h=Math.max(1,Math.floor(r.height));cv.width=w*dpr;cv.height=h*dpr;cv._w=w;cv._h=h;} }
+window.addEventListener('resize',resize);
+if(!navigator.serial){ log('此浏览器不支持 Web Serial API，请使用 Chrome / Edge','error'); els.connectBtn.disabled=true; } else { log('Web Serial API 可用，点击“连接串口”选择 COM 口','info'); }
+resize(); drawScene(0,0,0); drawChart(); updateFreqGauge(0); schedule();
+</script>
+</body>
+</html>

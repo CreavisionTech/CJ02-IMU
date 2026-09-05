@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>cj02_imu_node</name>
+  <version>1.0.0</version>
+  <description>CJ02-IMU ROS driver — publishes sensor_msgs/Imu and geometry_msgs/QuaternionStamped at 800 Hz</description>
+  <maintainer email="support@creavision.tech">Creavision Tech</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_geometry_msgs</depend>
+
+  <export>
+  </export>
+</package>
