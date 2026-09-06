@@ -1,10 +1,34 @@
-# CJ02-IMU
+<h1 align="center">CJ02-IMU</h1>
 
-**迷你六轴 IMU 传感器 · ESKF 姿态解算 · 800 Hz 输出**
+<p align="center">
+  <strong>迷你六轴 IMU 传感器 · ESKF 姿态解算 · 800 Hz 输出</strong>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Dashboard](https://img.shields.io/badge/Dashboard-GitHub%20Pages-blue)](https://creavisiontech.github.io/CJ02-IMU/)
-[![Protocol](https://img.shields.io/badge/Protocol-v1.0-green)](docs/PROTOCOL.md)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://creavisiontech.github.io/CJ02-IMU/"><img src="https://img.shields.io/badge/Dashboard-GitHub%20Pages-blue" alt="Web Dashboard"></a>
+  <a href="docs/PROTOCOL.md"><img src="https://img.shields.io/badge/Protocol-v1.0-green" alt="Protocol v1.0"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/cj02-imu-product.jpg" width="720" alt="CJ02-IMU 实物与一元硬币的大小对比，展示板载元件、接口和安装孔">
+</p>
+
+<p align="center">
+  <sub>CJ02-IMU 实物展示 · 与一元硬币对比</sub>
+</p>
+
+<p align="center">
+  <a href="https://creavisiontech.github.io/CJ02-IMU/"><strong>在线 Dashboard</strong></a>
+  &nbsp; · &nbsp;
+  <a href="#快速上手">快速上手</a>
+  &nbsp; · &nbsp;
+  <a href="docs/PROTOCOL.md">通信协议</a>
+  &nbsp; · &nbsp;
+  <a href="sdk/python">Python SDK</a>
+  &nbsp; · &nbsp;
+  <a href="sdk/cpp">C++ SDK</a>
+</p>
 
 ---
 
