@@ -84,6 +84,10 @@ private:
 
     ros::Publisher pub_raw_, pub_data_, pub_attitude_;
 
+    sensor_msgs::Imu last_raw_;
+    uint16_t last_raw_seq_ = 0;
+    bool have_raw_ = false;
+
     void rawCallback(const cj02::RawFrame& f) {
         sensor_msgs::Imu msg;
         msg.header.stamp = ros::Time::now();
@@ -102,8 +106,11 @@ private:
         msg.angular_velocity.z = f.gyrZ_dps() * DEG2RAD;
 
         // Covariances (unknown)
-        msg.linear_acceleration_covariance[0] = -1;
-        msg.angular_velocity_covariance[0] = -1;
+        // All-zero covariance means unknown; -1 means the field is absent.
+        msg.orientation_covariance[0] = -1;
+        last_raw_ = msg;
+        last_raw_seq_ = f.seq;
+        have_raw_ = true;
 
         pub_raw_.publish(msg);
     }
@@ -111,8 +118,16 @@ private:
     void attitudeCallback(const cj02::AttitudeFrame& f) {
         ros::Time now = ros::Time::now();
 
-        // Full IMU message with orientation
+        // Pair only the raw frame with the same output sequence. If it was
+        // lost, mark those fields unavailable instead of publishing fake zeros.
         sensor_msgs::Imu msg;
+        if (have_raw_ && last_raw_seq_ == static_cast<uint16_t>(f.seq)) {
+            msg = last_raw_;
+        } else {
+            msg.linear_acceleration_covariance[0] = -1;
+            msg.angular_velocity_covariance[0] = -1;
+        }
+        have_raw_ = false;
         msg.header.stamp = now;
         msg.header.frame_id = frame_id_;
 
@@ -127,14 +142,9 @@ private:
         msg.orientation.y = q.y();
         msg.orientation.z = q.z();
         msg.orientation.w = q.w();
-        msg.orientation_covariance[0] = 0.0025;  // ~2.5° std
+        msg.orientation_covariance[0] = f.mode == 0 ? -1.0 : 0.0025;  // ~2.5° std
         msg.orientation_covariance[4] = 0.0025;
         msg.orientation_covariance[8] = 0.0025;
-
-        // Raw data also in the combined message
-        constexpr float G2MSS = 9.80665f;
-        // (these come from the raw callback, so we don't duplicate here —
-        //  /imu/data has orientation, /imu/data_raw has raw sensor values)
 
         pub_data_.publish(msg);
 

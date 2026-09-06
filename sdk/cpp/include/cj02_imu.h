@@ -28,6 +28,7 @@
 #include <vector>
 #include <string>
 #include <atomic>
+#include <cctype>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,6 +47,8 @@
 
 namespace cj02 {
 
+static constexpr float ACCEL_LSB_PER_G = 2048.0f; // Current firmware: +/-16 g.
+
 // ============================================================
 // Frame structures (mirrors the on-wire format)
 // ============================================================
@@ -57,14 +60,14 @@ struct RawFrame {
     static constexpr int SIZE = 16;
 
     uint8_t  sync;        // 0xAA
-    int16_t  acc[3];      // ±2g, 16384 LSB/g
+    int16_t  acc[3];      // ±16g, 2048 LSB/g
     int16_t  gyr[3];      // ±2000°/s, 16.4 LSB/(°/s)
     uint16_t seq;         // frame sequence
     uint8_t  checksum;    // XOR of bytes 1..14
 
-    float accX_mg() const { return acc[0] * 1000.0f / 16384.0f; }
-    float accY_mg() const { return acc[1] * 1000.0f / 16384.0f; }
-    float accZ_mg() const { return acc[2] * 1000.0f / 16384.0f; }
+    float accX_mg() const { return acc[0] * 1000.0f / ACCEL_LSB_PER_G; }
+    float accY_mg() const { return acc[1] * 1000.0f / ACCEL_LSB_PER_G; }
+    float accZ_mg() const { return acc[2] * 1000.0f / ACCEL_LSB_PER_G; }
     float gyrX_dps() const { return gyr[0] / 16.4f; }
     float gyrY_dps() const { return gyr[1] / 16.4f; }
     float gyrZ_dps() const { return gyr[2] / 16.4f; }
@@ -147,6 +150,20 @@ static_assert(sizeof(Config) == 80, "Config must be 80 bytes");
 
 class SerialPort {
 public:
+    static std::string devicePath(const std::string& port) {
+#ifdef _WIN32
+        if (port.size() > 3 &&
+            std::toupper(static_cast<unsigned char>(port[0])) == 'C' &&
+            std::toupper(static_cast<unsigned char>(port[1])) == 'O' &&
+            std::toupper(static_cast<unsigned char>(port[2])) == 'M') {
+            for (size_t i = 3; i < port.size(); ++i)
+                if (!std::isdigit(static_cast<unsigned char>(port[i]))) return port;
+            return std::string("\\\\.\\COM") + port.substr(3);
+        }
+#endif
+        return port;  // Includes already-prefixed Windows device paths.
+    }
+
     SerialPort() {
 #ifdef _WIN32
         handle_ = INVALID_HANDLE_VALUE;
@@ -158,7 +175,8 @@ public:
 
     bool open(const std::string& port, int baud) {
 #ifdef _WIN32
-        handle_ = CreateFileA(port.c_str(), GENERIC_READ | GENERIC_WRITE,
+        const std::string path = devicePath(port);
+        handle_ = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE,
                               0, NULL, OPEN_EXISTING, 0, NULL);
         if (handle_ == INVALID_HANDLE_VALUE) return false;
 
@@ -272,6 +290,8 @@ public:
     std::function<void(const AttitudeFrame&)>  onAttitude;
     std::function<void(const SyncEventFrame&)> onSyncEvent;
     std::function<void(const Config&)>         onConfig;
+    // Called for every command reply; true means the device returned OK.
+    std::function<void(uint8_t, bool)>          onConfigReply;
 
     bool open(const std::string& port, int baud = 460800) {
         return serial_.open(port, baud);
@@ -309,13 +329,9 @@ public:
     uint32_t goodFrames() const { return framesGood_; }
     uint32_t badFrames()  const { return framesBad_; }
 
-    // Config commands
+    // Config commands: return write success only. Wait for onConfigReply
+    // before sending another command; keep run()/feed() active to receive it.
     bool getConfig() {
-        uint8_t cmd[3] = {0xAC, 0x01, 0x00};
-        uint8_t xor_v = cmd[1] ^ cmd[2];
-        uint8_t frame[5] = {0xAC, 0x01, 0x00, 0x00, xor_v};
-        // frame = sync, cmd, len, ...no payload..., checksum
-        // Actually: 0xAC | 0x01 | 0x00 | checksum (4 bytes)
         uint8_t pkt[4] = {0xAC, 0x01, 0x00, 0x01};
         pkt[3] = 0x01 ^ 0x00;  // cmd ^ len
         return serial_.write(pkt, 4) == 4;
@@ -411,6 +427,9 @@ private:
         uint8_t xor_v = 0;
         for (int i = 1; i < len - 1; i++) xor_v ^= data[i];
         if (xor_v != data[len - 1]) return false;
+
+        if (payloadLen < 1) return false;
+        if (onConfigReply) onConfigReply(cmd, data[3] == 0x01);
 
         if (cmd == 0x01 && payloadLen == 81 && data[3] == 0x01) {
             // GET_CONFIG reply: [status=1] + 80 bytes config

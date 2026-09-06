@@ -88,6 +88,10 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr pub_data_;
     rclcpp::Publisher<geometry_msgs::msg::Vector3Stamped>::SharedPtr pub_attitude_;
 
+    sensor_msgs::msg::Imu last_raw_;
+    uint16_t last_raw_seq_ = 0;
+    bool have_raw_ = false;
+
     void rawCallback(const cj02::RawFrame& f) {
         auto msg = sensor_msgs::msg::Imu();
         msg.header.stamp = this->now();
@@ -104,8 +108,11 @@ private:
         msg.angular_velocity.y = f.gyrY_dps() * DEG2RAD;
         msg.angular_velocity.z = f.gyrZ_dps() * DEG2RAD;
 
-        msg.linear_acceleration_covariance[0] = -1;
-        msg.angular_velocity_covariance[0] = -1;
+        // All-zero covariance means unknown; -1 means the field is absent.
+        msg.orientation_covariance[0] = -1;
+        last_raw_ = msg;
+        last_raw_seq_ = f.seq;
+        have_raw_ = true;
 
         pub_raw_->publish(msg);
     }
@@ -113,8 +120,16 @@ private:
     void attitudeCallback(const cj02::AttitudeFrame& f) {
         auto now = this->now();
 
-        // Full IMU message with orientation
-        auto msg = sensor_msgs::msg::Imu();
+        // Pair only the raw frame with the same output sequence. If it was
+        // lost, mark those fields unavailable instead of publishing fake zeros.
+        sensor_msgs::msg::Imu msg;
+        if (have_raw_ && last_raw_seq_ == static_cast<uint16_t>(f.seq)) {
+            msg = last_raw_;
+        } else {
+            msg.linear_acceleration_covariance[0] = -1;
+            msg.angular_velocity_covariance[0] = -1;
+        }
+        have_raw_ = false;
         msg.header.stamp = now;
         msg.header.frame_id = frame_id_;
 
@@ -128,7 +143,7 @@ private:
         msg.orientation.y = q.y();
         msg.orientation.z = q.z();
         msg.orientation.w = q.w();
-        msg.orientation_covariance[0] = 0.0025;
+        msg.orientation_covariance[0] = f.mode == 0 ? -1.0 : 0.0025;
         msg.orientation_covariance[4] = 0.0025;
         msg.orientation_covariance[8] = 0.0025;
 

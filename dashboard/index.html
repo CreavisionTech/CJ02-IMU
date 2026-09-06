@@ -636,9 +636,9 @@ function render(){
   const m=L.mode; els.eskfMode.textContent=MODE_NAMES[m]||'未知'; els.modeTag.textContent=m===1?'RUN':(m===0?'INIT':(m===2?'NO_ACC':'REJECT')); els.modeTag.className='tag '+(m===1?'on':'off'); els.eskfMode.style.color=MODE_COLOR[m]||'var(--txt)';
   fmtTag(els.accelUsed,L.flags&1,'使用中','未使用'); fmtTag(els.zaruUsed,L.flags&2,'使用中','未使用'); fmtTag(els.isStatic,L.flags&4,'静止','运动');
   const R=state.latestRaw;
-  els.accX.textContent=Math.round(R.acc[0]*1000/16384);
-  els.accY.textContent=Math.round(R.acc[1]*1000/16384);
-  els.accZ.textContent=Math.round(R.acc[2]*1000/16384);
+  els.accX.textContent=Math.round(R.acc[0]*1000/2048);
+  els.accY.textContent=Math.round(R.acc[1]*1000/2048);
+  els.accZ.textContent=Math.round(R.acc[2]*1000/2048);
   els.gyrX.textContent=(R.gyr[0]/16.4).toFixed(1);
   els.gyrY.textContent=(R.gyr[1]/16.4).toFixed(1);
   els.gyrZ.textContent=(R.gyr[2]/16.4).toFixed(1);

@@ -34,19 +34,20 @@ SYNC_CONFIG = 0xAC
 SIZE_RAW = 16
 SIZE_ATTITUDE = 20
 SIZE_EVENT = 22
+ACCEL_LSB_PER_G = 2048.0  # Current firmware: BMI160 +/-16 g.
 
 
 @dataclass
 class RawFrame:
     """Raw IMU data frame (0xAA, 16 bytes)."""
-    acc: tuple          # (x, y, z) in LSB, ±2g, 16384 LSB/g
+    acc: tuple          # (x, y, z) in LSB, ±16g, 2048 LSB/g
     gyr: tuple          # (x, y, z) in LSB, ±2000°/s, 16.4 LSB/(°/s)
     seq: int            # frame sequence
 
     @property
     def acc_mg(self) -> tuple:
         """Acceleration in milligravity."""
-        return tuple(v * 1000.0 / 16384.0 for v in self.acc)
+        return tuple(v * 1000.0 / ACCEL_LSB_PER_G for v in self.acc)
 
     @property
     def gyr_dps(self) -> tuple:
@@ -134,6 +135,7 @@ class CJ02IMU:
         on_attitude:  Callable[[AttitudeFrame], None]
         on_sync:      Callable[[SyncEventFrame], None]
         on_config:    Callable[[Config], None]
+        on_config_reply: Callable[[int, bool], None] (command, device success)
     """
 
     def __init__(self):
@@ -147,6 +149,8 @@ class CJ02IMU:
         self.on_attitude: Callable[[AttitudeFrame], None] = None
         self.on_sync: Callable[[SyncEventFrame], None] = None
         self.on_config: Callable[[Config], None] = None
+        # Command/status acknowledgement; set_config returns write success only.
+        self.on_config_reply: Callable[[int, bool], None] = None
 
         # Statistics
         self.good_frames = 0
@@ -192,7 +196,10 @@ class CJ02IMU:
         return True
 
     def set_config(self, cfg: Config) -> bool:
-        """Send SET_CONFIG command with the given config."""
+        """Send SET_CONFIG. True means sent; check on_config_reply for device status.
+
+        Wait for the reply before sending another command. Keep the reader running.
+        """
         if not self.serial or not self.serial.is_open:
             return False
         payload = struct.pack('<17fIIHH',
@@ -325,6 +332,11 @@ class CJ02IMU:
         xor_v = _xor_checksum(frame[1:len(frame)-1])
         if xor_v != frame[-1]:
             return False
+
+        if payload_len < 1:
+            return False
+        if self.on_config_reply:
+            self.on_config_reply(cmd, frame[3] == 0x01)
 
         if cmd == 0x01 and payload_len == 81 and frame[3] == 0x01:
             # GET_CONFIG reply: [status=1] + 80 bytes
