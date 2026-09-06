@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IMU ESKF · 三轴姿态</title>
+<link rel="stylesheet" href="vibration.css">
 <style>
   :root{
     --bg:#f4f6f9;
@@ -349,6 +350,7 @@ function process(data){
         state.latestRaw={acc:[v.getInt16(1,true),v.getInt16(3,true),v.getInt16(5,true)],
                          gyr:[v.getInt16(7,true),v.getInt16(9,true),v.getInt16(11,true)],
                          seq:v.getUint16(13,true)};
+        if(window.vibrationAddSample) window.vibrationAddSample(state.latestRaw);
         state.buffer=b.slice(frameLen);   /* good: advance past frame */
       }else{
         state.bad++;
@@ -673,5 +675,6 @@ window.addEventListener('resize',resize);
 if(!navigator.serial){ log('此浏览器不支持 Web Serial API，请使用 Chrome / Edge','error'); els.connectBtn.disabled=true; } else { log('Web Serial API 可用，点击“连接串口”选择 COM 口','info'); }
 resize(); drawScene(0,0,0); drawChart(); updateFreqGauge(0); schedule();
 </script>
+<script src="vibration.js"></script>
 </body>
 </html>

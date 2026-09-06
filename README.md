@@ -52,7 +52,9 @@ CJ02-IMU 是一款高性能迷你六轴惯性测量单元（IMU），内置 ESKF
 
 ### 在线工具
 
-- **[Web Dashboard](https://creavisiontech.github.io/CJ02-IMU/)** — 浏览器直接连接串口，实时查看 3D 姿态、原始数据、曲线图，可在线修改传感器配置参数
+- **[Web Dashboard](https://creavisiontech.github.io/CJ02-IMU/)** — 浏览器直接连接串口，实时查看 3D 姿态、原始数据和曲线，可在线修改 ESKF 参数，并通过交互式向导完成电机关闭基线、实际工况、振动频谱、滤波方案离线重放和上机复测。
+
+振动分析在浏览器本地完成，采集内容不会上传。每段采集至少 3 秒，建议基线采集 5–10 秒；工况采集应覆盖实际转速、负载和运动范围。分析器使用 1 秒 Hann 窗和 50% 重叠，在 15–350 Hz 范围内比较工况与基线，输出加速度计/陀螺仪陷波中心、Q 值、低通截止频率及滤波前后高频 RMS。生成的 JSON 报告可以直接从页面下载。
 
 ---
 
@@ -159,7 +161,9 @@ CJ02-IMU/
 │       ├── CMakeLists.txt
 │       └── src/cj02_imu_node.cpp
 ├── dashboard/
-│   └── index.html            # Web Dashboard（GitHub Pages 部署）
+│   ├── index.html            # Web Dashboard（GitHub Pages 部署）
+│   ├── vibration.js          # 浏览器端振动采集、FFT、滤波重放和复测
+│   └── vibration.css         # 振动分析向导样式
 └── .github/
     └── workflows/
         └── pages.yml         # GitHub Pages 自动部署
