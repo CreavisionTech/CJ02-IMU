@@ -160,7 +160,7 @@
       <span class="pill" id="status"><i class="ind"></i><span id="statusTxt">未连接</span></span>
       <select id="baudRate">
         <option value="460800" selected>460800</option>
-        <option value="921600">921600</option>
+        <option value="2000000">2000000</option>
         <option value="230400">230400</option>
         <option value="115200">115200</option>
       </select>
@@ -203,7 +203,7 @@
     <div class="chip"><div class="lbl">加速度计</div><span class="tag off" id="accelUsed">未使用</span></div>
     <div class="chip"><div class="lbl">ZARU</div><span class="tag off" id="zaruUsed">未使用</span></div>
     <div class="chip"><div class="lbl">静止检测</div><span class="tag off" id="isStatic">运动</span></div>
-    <div class="chip freq"><div><div class="lbl">输出频率</div><div class="v" id="frequency">0</div><div class="small">/ 800 Hz</div></div><svg class="gauge" viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="16"/><circle class="fg" id="freqArc" cx="22" cy="22" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg></div>
+    <div class="chip freq"><div><div class="lbl">输出频率</div><div class="v" id="frequency">0</div><div class="small" id="targetFrequency">/ 800 Hz</div></div><svg class="gauge" viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="16"/><circle class="fg" id="freqArc" cx="22" cy="22" r="16" stroke-dasharray="100.5" stroke-dashoffset="100.5"/></svg></div>
     <div class="chip"><div class="lbl">序列号 seq</div><div class="v" id="seq" style="font-size:1.3rem">0</div></div>
     <div class="chip"><div class="lbl">坏帧 / 丢包</div><div class="v" id="badCount" style="font-size:1.3rem;color:var(--bad)">0</div></div>
     <div class="chip"><div class="lbl">外部同步触发</div><div class="v" id="syncCount" style="font-size:1.3rem;color:var(--accent)">0</div><div class="small" id="syncInfo">等待 INT2</div></div>
@@ -224,7 +224,7 @@
   </section>
 
   <div class="hint">
-    Chrome / Edge 打开本页 → <code>连接串口</code> → 选 COM 口 → 波特率与固件一致（默认 <code>460800</code>）。固件经 USART1(PA2) 以 DMA 输出 0xAA 原始帧 + 0xAB 姿态帧，目标 800 Hz。点 <code>⚙ 配置</code> 查看/修改 ESKF 参数与触发输出。
+    Chrome / Edge 打开本页 → <code>连接串口</code> → 选 COM 口 → 波特率与固件一致（默认 <code>460800</code>）。固件经 USART1(PA2) 以 DMA 输出 0xAA 原始帧 + 0xAB 姿态帧，输出率可选 1600/800/400/200 Hz。点 <code>⚙ 配置</code> 查看/修改 ESKF 参数与触发输出。
   </div>
 
   <!-- config modal -->
@@ -257,7 +257,7 @@ const els = {
   hdgBadge:document.getElementById('hdgBadge'),
   eskfMode:document.getElementById('eskfMode'), modeTag:document.getElementById('modeTag'),
   accelUsed:document.getElementById('accelUsed'), zaruUsed:document.getElementById('zaruUsed'), isStatic:document.getElementById('isStatic'),
-  frequency:document.getElementById('frequency'), freqArc:document.getElementById('freqArc'),
+  frequency:document.getElementById('frequency'), freqArc:document.getElementById('freqArc'), targetFrequency:document.getElementById('targetFrequency'),
   seq:document.getElementById('seq'), badCount:document.getElementById('badCount'),
   log:document.getElementById('log'), logToggle:document.getElementById('logToggle'),
   rangeLbl:document.getElementById('rangeLbl'), rangeBtn:document.getElementById('rangeBtn'),
@@ -306,6 +306,7 @@ async function connect(){
     els.connectBtn.textContent='断开'; els.connectBtn.classList.add('on');
     els.status.className='pill live'; els.statusTxt.textContent=`已连接 · ${baud}`;
     log(`串口已连接，波特率 ${baud}`,'success'); readLoop(); getConfig();
+    if(window.vibrationGetConfig) window.vibrationGetConfig();
   }catch(err){
     if(err&&err.name!=='NotFoundError'&&err.name!=='AbortError') log(`连接失败：${err.message}`,'error');
     els.status.className='pill err'; els.statusTxt.textContent='连接失败';
@@ -318,6 +319,24 @@ async function disconnect(){
   els.connectBtn.textContent='连接串口'; els.connectBtn.classList.remove('on');
   els.status.className='pill'; els.statusTxt.textContent='未连接';
   log('串口已断开','info');
+}
+async function reconnectBaud(baud){
+  const port=state.port;
+  if(!port) return false;
+  try{
+    state.connected=false;
+    if(state.reader){try{await state.reader.cancel();}catch(_){} state.reader=null;}
+    if(state.writer){try{state.writer.releaseLock();}catch(_){} state.writer=null;}
+    await new Promise(r=>setTimeout(r,40));
+    try{await port.close();}catch(_){}
+    await port.open({baudRate:baud,dataBits:8,stopBits:1,parity:'none'});
+    state.port=port;state.buffer=new Uint8Array(0);state.connected=true;
+    state.writer=port.writable.getWriter();els.baudRate.value=String(baud);
+    els.status.className='pill live';els.statusTxt.textContent=`已连接 · ${baud}`;
+    log(`已自动切换并重新连接到 ${baud} 波特率`,'success');
+    readLoop();getConfig();if(window.vibrationGetConfig)window.vibrationGetConfig();
+    return true;
+  }catch(e){state.connected=false;els.status.className='pill err';els.statusTxt.textContent='请重新连接';log(`波特率切换后重连失败：${e.message}`,'error');return false;}
 }
 async function readLoop(){
   const reader=state.port.readable.getReader(); state.reader=reader;
@@ -451,6 +470,10 @@ function handleReply(f){
   const cmd=f[1], len=f[2], payload=f.subarray(3,3+len);
   let xor=cmd^len; for(let i=0;i<len;i++) xor^=payload[i];
   if(xor!==f[3+len]) { log('配置回复校验错误','error'); return; }
+  if(window.vibrationHandleReply && cmd>=0x04 && cmd<=0x09){
+    window.vibrationHandleReply(cmd,payload[0]===1,payload.subarray(1));
+    return;
+  }
   if(cmd===0x01){  // GET_CONFIG reply
     const status=payload[0];
     if(status===1 && len===81){
@@ -627,7 +650,8 @@ function drawChart(){
   draw(h.r,C.roll,state.vis.r); draw(h.p,C.pitch,state.vis.p); draw(h.y,C.yaw,state.vis.y);
 }
 
-function updateFreqGauge(f){ const Cc=2*PI*16, frac=Math.max(0,Math.min(1,f/800)); els.freqArc.style.strokeDasharray=Cc.toFixed(2); els.freqArc.style.strokeDashoffset=(Cc*(1-frac)).toFixed(2); }
+window.currentOutputRate=800;
+function updateFreqGauge(f){ const Cc=2*PI*16, frac=Math.max(0,Math.min(1,f/window.currentOutputRate)); els.freqArc.style.strokeDasharray=Cc.toFixed(2); els.freqArc.style.strokeDashoffset=(Cc*(1-frac)).toFixed(2); }
 function fmtTag(el,on,yes,no){ el.textContent=on?yes:no; el.className='tag '+(on?'on':'off'); }
 
 let rafId=null;

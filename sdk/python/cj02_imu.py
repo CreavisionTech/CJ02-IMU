@@ -117,6 +117,19 @@ class Config:
     trigger_divider: int = 0
     trigger_duty: int = 20
 
+@dataclass
+class FilterConfig:
+    """ESKF-input filtering and transport configuration (68 bytes)."""
+    flags: int = 0
+    output_rate_hz: int = 800
+    baud_rate: int = 460800
+    accel_lpf_hz: float = 200.0
+    gyro_lpf_hz: float = 200.0
+    accel_notch_hz: tuple = (100.0, 150.0, 200.0)
+    accel_notch_q: tuple = (10.0, 10.0, 10.0)
+    gyro_notch_hz: tuple = (100.0, 150.0, 200.0)
+    gyro_notch_q: tuple = (10.0, 10.0, 10.0)
+
 
 def _xor_checksum(data: bytes) -> int:
     """XOR checksum of all bytes."""
@@ -135,6 +148,7 @@ class CJ02IMU:
         on_attitude:  Callable[[AttitudeFrame], None]
         on_sync:      Callable[[SyncEventFrame], None]
         on_config:    Callable[[Config], None]
+        on_filter_config: Callable[[FilterConfig], None]
         on_config_reply: Callable[[int, bool], None] (command, device success)
     """
 
@@ -149,6 +163,7 @@ class CJ02IMU:
         self.on_attitude: Callable[[AttitudeFrame], None] = None
         self.on_sync: Callable[[SyncEventFrame], None] = None
         self.on_config: Callable[[Config], None] = None
+        self.on_filter_config: Callable[[FilterConfig], None] = None
         # Command/status acknowledgement; set_config returns write success only.
         self.on_config_reply: Callable[[int, bool], None] = None
 
@@ -230,6 +245,35 @@ class CJ02IMU:
         pkt = bytes([SYNC_CONFIG, 0x03, 0x00, 0x03 ^ 0x00])
         self.serial.write(pkt)
         return True
+
+    def _simple_command(self, cmd: int, payload: bytes = b'') -> bool:
+        if not self.serial or not self.serial.is_open or len(payload) > 255:
+            return False
+        checksum = cmd ^ len(payload)
+        for b in payload: checksum ^= b
+        self.serial.write(bytes([SYNC_CONFIG, cmd, len(payload)]) + payload + bytes([checksum]))
+        return True
+
+    def get_filter_config(self) -> bool:
+        return self._simple_command(0x04)
+
+    def set_filter_temporary(self, cfg: FilterConfig) -> bool:
+        vals = (cfg.accel_lpf_hz, cfg.gyro_lpf_hz, *cfg.accel_notch_hz,
+                *cfg.accel_notch_q, *cfg.gyro_notch_hz, *cfg.gyro_notch_q)
+        payload = struct.pack('<III14f', cfg.flags, cfg.output_rate_hz, cfg.baud_rate, *vals)
+        return self._simple_command(0x05, payload)
+
+    def save_filter_config(self) -> bool:
+        return self._simple_command(0x06)
+
+    def disable_filters(self) -> bool:
+        return self._simple_command(0x07)
+
+    def enter_vibration_mode(self) -> bool:
+        return self._simple_command(0x08)
+
+    def exit_vibration_mode(self) -> bool:
+        return self._simple_command(0x09)
 
     def _read_loop(self):
         """Internal: read serial data and feed to parser."""
@@ -355,4 +399,10 @@ class CJ02IMU:
                 trigger_divider=vals[19], trigger_duty=vals[20])
             if self.on_config:
                 self.on_config(cfg)
+        elif cmd == 0x04 and payload_len == 69 and frame[3] == 0x01:
+            vals = struct.unpack('<III14f', frame[4:72])
+            cfg = FilterConfig(vals[0], vals[1], vals[2], vals[3], vals[4],
+                tuple(vals[5:8]), tuple(vals[8:11]), tuple(vals[11:14]), tuple(vals[14:17]))
+            if self.on_filter_config:
+                self.on_filter_config(cfg)
         return True

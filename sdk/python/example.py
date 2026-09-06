@@ -25,7 +25,7 @@ def main():
 
     imu = CJ02IMU()
 
-    # Attitude callback (fires at 800 Hz)
+    # Attitude callback (default 800 Hz; configurable to 1600/800/400/200 Hz)
     frame_count = [0]
     start_time = [time.time()]
 

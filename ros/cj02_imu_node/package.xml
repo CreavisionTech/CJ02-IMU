@@ -2,7 +2,7 @@
 <package format="2">
   <name>cj02_imu_node</name>
   <version>1.0.0</version>
-  <description>CJ02-IMU ROS driver — publishes sensor_msgs/Imu and geometry_msgs/QuaternionStamped at 800 Hz</description>
+  <description>CJ02-IMU ROS driver — publishes sensor_msgs/Imu and geometry_msgs/QuaternionStamped at the configured output rate</description>
   <maintainer email="support@creavision.tech">Creavision Tech</maintainer>
   <license>MIT</license>
 

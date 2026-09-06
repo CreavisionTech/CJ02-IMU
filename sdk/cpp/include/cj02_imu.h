@@ -144,6 +144,19 @@ struct Config {
 };
 static_assert(sizeof(Config) == 80, "Config must be 80 bytes");
 
+struct FilterConfig {
+    uint32_t flags = 0;
+    uint32_t output_rate_hz = 800;
+    uint32_t baud_rate = 460800;
+    float accel_lpf_hz = 200.0f;
+    float gyro_lpf_hz = 200.0f;
+    float accel_notch_hz[3] = {100,150,200};
+    float accel_notch_q[3] = {10,10,10};
+    float gyro_notch_hz[3] = {100,150,200};
+    float gyro_notch_q[3] = {10,10,10};
+};
+static_assert(sizeof(FilterConfig) == 68, "FilterConfig must be 68 bytes");
+
 // ============================================================
 // Serial port abstraction
 // ============================================================
@@ -204,8 +217,14 @@ public:
         termios tty = {};
         if (tcgetattr(fd_, &tty) != 0) { close(); return false; }
 
-        cfsetospeed(&tty, B460800);
-        cfsetispeed(&tty, B460800);
+        speed_t speed;
+        if (baud == 460800) speed = B460800;
+#ifdef B2000000
+        else if (baud == 2000000) speed = B2000000;
+#endif
+        else { close(); return false; }
+        cfsetospeed(&tty, speed);
+        cfsetispeed(&tty, speed);
 
         tty.c_cflag &= ~PARENB;
         tty.c_cflag &= ~CSTOPB;
@@ -290,6 +309,7 @@ public:
     std::function<void(const AttitudeFrame&)>  onAttitude;
     std::function<void(const SyncEventFrame&)> onSyncEvent;
     std::function<void(const Config&)>         onConfig;
+    std::function<void(const FilterConfig&)>   onFilterConfig;
     // Called for every command reply; true means the device returned OK.
     std::function<void(uint8_t, bool)>          onConfigReply;
 
@@ -353,12 +373,30 @@ public:
         return serial_.write(pkt, 4) == 4;
     }
 
+    bool getFilterConfig() { return sendCommand(0x04, nullptr, 0); }
+    bool setFilterTemporary(const FilterConfig& cfg) {
+        return sendCommand(0x05, reinterpret_cast<const uint8_t*>(&cfg), sizeof(cfg));
+    }
+    bool saveFilterConfig() { return sendCommand(0x06, nullptr, 0); }
+    bool disableFilters() { return sendCommand(0x07, nullptr, 0); }
+    bool enterVibrationMode() { return sendCommand(0x08, nullptr, 0); }
+    bool exitVibrationMode() { return sendCommand(0x09, nullptr, 0); }
+
 private:
     SerialPort serial_;
     std::vector<uint8_t> buffer_;
     std::atomic<bool> running_;
     uint32_t framesGood_;
     uint32_t framesBad_;
+
+    bool sendCommand(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+        std::vector<uint8_t> pkt(4U + len);
+        pkt[0]=0xAC;pkt[1]=cmd;pkt[2]=len;
+        uint8_t sum=cmd^len;
+        for(uint8_t i=0;i<len;++i){pkt[3+i]=payload[i];sum^=payload[i];}
+        pkt[3+len]=sum;
+        return serial_.write(pkt.data(), static_cast<int>(pkt.size())) == static_cast<int>(pkt.size());
+    }
 
     void parseBuffer() {
         while (!buffer_.empty()) {
@@ -436,6 +474,10 @@ private:
             Config cfg;
             memcpy(&cfg, data + 4, 80);
             if (onConfig) onConfig(cfg);
+        } else if (cmd == 0x04 && payloadLen == 69 && data[3] == 0x01) {
+            FilterConfig cfg;
+            memcpy(&cfg, data + 4, sizeof(cfg));
+            if (onFilterConfig) onFilterConfig(cfg);
         }
         return true;
     }

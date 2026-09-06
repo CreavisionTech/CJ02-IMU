@@ -3,7 +3,7 @@
  * \brief CJ02-IMU ROS1 driver node.
  *
  * Publishes:
- *   /imu/data_raw     (sensor_msgs/Imu)         — raw accel + gyro at 800 Hz
+ *   /imu/data_raw     (sensor_msgs/Imu)         — raw accel + gyro at configured rate
  *   /imu/data         (sensor_msgs/Imu)         — with orientation from ESKF
  *   /imu/attitude     (geometry_msgs/Vector3Stamped) — roll/pitch/yaw in degrees
  *
