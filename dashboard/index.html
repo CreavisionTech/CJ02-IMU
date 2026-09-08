@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>IMU ESKF · 三轴姿态</title>
+<title>CJ02-IMU · 姿态与振动工具</title>
 <link rel="stylesheet" href="vibration.css">
 <style>
   :root{
@@ -45,6 +45,12 @@
   .brand .mark svg{width:20px;height:20px}
   .brand .t1{font-weight:600;font-size:1.02rem;letter-spacing:.1px}
   .brand .t2{font-size:.73rem;color:var(--txt-3);font-family:var(--mono);margin-top:1px}
+  .view-nav{display:flex;gap:4px;padding:4px;background:var(--bg);border:1px solid var(--line);border-radius:11px}
+  .view-nav button{padding:7px 14px;background:transparent;color:var(--txt-2);font-size:.8rem}
+  .view-nav button.active{background:var(--card);color:var(--accent);box-shadow:0 1px 4px rgba(15,23,42,.09)}
+  .page-view[hidden]{display:none}
+  .view-intro{margin-bottom:18px;padding:18px 20px;background:linear-gradient(135deg,#ecfeff,#eff6ff);border:1px solid #bae6fd;border-radius:var(--radius)}
+  .view-intro h1{font-size:1.15rem;margin-bottom:5px}.view-intro p{font-size:.8rem;color:var(--txt-2);line-height:1.6}
   .conn{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .pill{
     display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;
@@ -152,10 +158,14 @@
     <div class="brand">
       <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M5 5l14 14M19 5L5 19"/></svg></div>
       <div>
-        <div class="t1">IMU ESKF 三轴姿态</div>
-        <div class="t2">0xAB · roll / pitch / yaw (float32°)</div>
+        <div class="t1">CJ02-IMU 工具</div>
+        <div class="t2">姿态监控 · 振动分析 · 滤波配置</div>
       </div>
     </div>
+    <nav class="view-nav" aria-label="功能页面">
+      <button id="attitudeTab" class="active" aria-pressed="true">姿态监控</button>
+      <button id="vibrationTab" aria-pressed="false">振动测试</button>
+    </nav>
     <div class="conn">
       <span class="pill" id="status"><i class="ind"></i><span id="statusTxt">未连接</span></span>
       <select id="baudRate">
@@ -169,6 +179,7 @@
     </div>
   </header>
 
+  <div id="attitudeView" class="page-view">
   <main class="grid">
     <section class="card">
       <div class="card-h"><h2>三轴姿态 · 3D</h2><span class="chip-badge" id="hdgBadge">N 000°</span></div>
@@ -217,6 +228,14 @@
     <div class="chip"><div class="lbl">Gyr Y (°/s)</div><div class="v" id="gyrY" style="font-size:1.2rem">0.0</div></div>
     <div class="chip"><div class="lbl">Gyr Z (°/s)</div><div class="v" id="gyrZ" style="font-size:1.2rem">0.0</div></div>
   </section>
+  </div>
+
+  <div id="vibrationView" class="page-view" hidden>
+    <div class="view-intro">
+      <h1>振动采集与滤波调试</h1>
+      <p>按电机关闭基线、实际工况、离线重放、临时应用和上机复测的顺序完成分析。切换页面不会断开串口或清除采集进度。</p>
+    </div>
+  </div>
 
   <section class="card logcard">
     <div class="card-h"><h2>日志</h2><button id="logToggle">展开 ▾</button></div>
@@ -248,6 +267,8 @@
 "use strict";
 const els = {
   connectBtn:document.getElementById('connectBtn'),
+  attitudeTab:document.getElementById('attitudeTab'), vibrationTab:document.getElementById('vibrationTab'),
+  attitudeView:document.getElementById('attitudeView'), vibrationView:document.getElementById('vibrationView'),
   status:document.getElementById('status'),
   statusTxt:document.getElementById('statusTxt'),
   baudRate:document.getElementById('baudRate'),
@@ -286,6 +307,15 @@ const state={
 const RANGES=[180,90,null], RANGE_NAMES=["±180°","±90°","自动"];
 const MODE_NAMES=["初始化","运行","无加速度","拒绝"], MODE_COLOR=["#f59e0b","#16a34a","#3b82f6","#dc2626"];
 const C={roll:"#0891b2",pitch:"#2563eb",yaw:"#e11d48"};
+
+function showView(name){
+  const vibration=name==='vibration';
+  els.attitudeView.hidden=vibration; els.vibrationView.hidden=!vibration;
+  els.attitudeTab.classList.toggle('active',!vibration); els.vibrationTab.classList.toggle('active',vibration);
+  els.attitudeTab.setAttribute('aria-pressed',String(!vibration));
+  els.vibrationTab.setAttribute('aria-pressed',String(vibration));
+  history.replaceState(null,'',vibration?'#vibration':'#attitude');
+}
 
 function log(m,t='info'){
   const e=document.createElement('div');e.className='e '+t;
@@ -681,6 +711,8 @@ function render(){
 function schedule(){ if(rafId==null) rafId=requestAnimationFrame(render); }
 
 els.connectBtn.addEventListener('click',connect);
+els.attitudeTab.addEventListener('click',()=>showView('attitude'));
+els.vibrationTab.addEventListener('click',()=>showView('vibration'));
 els.rangeBtn.addEventListener('click',()=>{ state.rangeIdx=(state.rangeIdx+1)%RANGES.length; els.rangeLbl.textContent='量程 '+RANGE_NAMES[state.rangeIdx]; });
 els.legend.querySelectorAll('.leg').forEach(el=>el.addEventListener('click',()=>{const k=el.dataset.k;state.vis[k]=!state.vis[k];el.classList.toggle('off',!state.vis[k]);}));
 els.logToggle.addEventListener('click',()=>{const h=els.log.hasAttribute('hidden');if(h){els.log.removeAttribute('hidden');els.logToggle.textContent='收起 ▴';}else{els.log.setAttribute('hidden','');els.logToggle.textContent='展开 ▾';}});
@@ -696,6 +728,7 @@ els.cfgReset.addEventListener('click',()=>{resetConfig();});
 els.cfgRefresh.addEventListener('click',()=>{getConfig();});
 function resize(){ dpr=Math.max(1,window.devicePixelRatio||1); for(const cv of[els.scene,els.chart]){const r=cv.getBoundingClientRect();const w=Math.max(1,Math.floor(r.width)),h=Math.max(1,Math.floor(r.height));cv.width=w*dpr;cv.height=h*dpr;cv._w=w;cv._h=h;} }
 window.addEventListener('resize',resize);
+showView(location.hash==='#vibration'?'vibration':'attitude');
 if(!navigator.serial){ log('此浏览器不支持 Web Serial API，请使用 Chrome / Edge','error'); els.connectBtn.disabled=true; } else { log('Web Serial API 可用，点击“连接串口”选择 COM 口','info'); }
 resize(); drawScene(0,0,0); drawChart(); updateFreqGauge(0); schedule();
 </script>

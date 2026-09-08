@@ -2,16 +2,17 @@
 const fs=require("fs"),vm=require("vm"),assert=require("assert");
 class ClassList{toggle(){} }
 class El{
-  constructor(id=""){this.id=id;this.disabled=false;this.textContent="";this.innerHTML="";this.className="";this.classList=new ClassList();this.dataset={};this.parentNode={insertBefore(){}}}
+  constructor(id=""){this.id=id;this.disabled=false;this.textContent="";this.innerHTML="";this.className="";this.classList=new ClassList();this.dataset={};this.children=[];this.parentNode={insertBefore(){}}}
   getContext(){return new Proxy({setTransform(){},clearRect(){},fillRect(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},fillText(){},setLineDash(){}},{set(o,k,v){o[k]=v;return true}})}
   getBoundingClientRect(){return{width:700,height:290}}
   insertAdjacentHTML(_where,html){this.innerHTML+=html}
+  appendChild(child){this.children.push(child);return child}
 }
 const ids=["vibExport","vibBaseCount","vibRunCount","vibValCount","vibBase","vibRun","vibStop","vibAnalyze","vibApply","vibSave","vibValidate","vibFilterReset","vibReset","vibStatus","vibChart","vibResults","vibOutputRate","vibBaud"];
 const elements=Object.fromEntries(ids.map(id=>[id,new El(id)]));
 const steps=["baseline","run","validation"].map(k=>{const e=new El();e.dataset.step=k;return e});
 const document={
-  querySelector(sel){return sel===".hint"?new El():null},
+  querySelector(sel){return sel==="#vibrationView"?new El("vibrationView"):null},
   querySelectorAll(sel){return sel===".vib-step"?steps:[]},
   createElement(tag){return new El(tag)},getElementById(id){return elements[id]}
 };

@@ -2,14 +2,14 @@
 (() => {
 const FS=1600,N=2048,WIN=1600,HOP=800,MINF=15,MAXF=700,MAX=FS*300;
 const V={phase:"idle",pending:null,baseline:[],run:[],validation:[],profile:null,analysis:null,lastSeq:null,gaps:0,clipped:0,tempApplied:false};
-const host=document.querySelector(".hint"),section=document.createElement("section");
+const host=document.querySelector("#vibrationView"),section=document.createElement("section");
 section.className="card vib-card";
 section.innerHTML=`<div class="vib-head"><div><h2>振动分析向导</h2><p>采集原始 IMU → 1 秒窗频谱 → 自动生成滤波建议 → 离线重放 → 实机复测</p></div><button id="vibExport" disabled>导出报告</button></div>
 <div class="vib-steps"><div class="vib-step" data-step="baseline"><b>1 · 电机关闭基线</b><span id="vibBaseCount">等待采集</span></div><div class="vib-step" data-step="run"><b>2 · 实际工况</b><span id="vibRunCount">等待采集</span></div><div class="vib-step" data-step="validation"><b>3 · 上机复测</b><span id="vibValCount">分析后可用</span></div></div>
 <div class="vib-actions"><button class="primary" id="vibBase">开始基线</button><button id="vibRun">开始工况</button><button id="vibStop" disabled>停止采集</button><button id="vibAnalyze" disabled>生成滤波方案</button><button id="vibApply" disabled>临时应用到设备</button><button id="vibSave" disabled>保存到 Flash</button><button id="vibValidate" disabled>开始复测</button><button id="vibFilterReset">关闭设备滤波</button><button id="vibReset">清空分析</button></div>
 <div class="vib-status" id="vibStatus">请先连接 IMU，保持电机关闭并采集至少 3 秒。</div>
 <div class="vib-grid"><div class="vib-plot"><canvas id="vibChart"></canvas></div><div class="vib-results" id="vibResults"><h3>分析结果</h3><div class="vib-note">振动模式采集 1600 Hz 未平均原始数据，分析范围 15–700 Hz。已经削顶或进入传感器前混叠的数据无法恢复。</div></div></div>`;
-host.parentNode.insertBefore(section,host);
+host.appendChild(section);
 const $=id=>document.getElementById(id),status=$("vibStatus"),results=$("vibResults"),canvas=$("vibChart"),ctx=canvas.getContext("2d");
 const B={baseline:$("vibBase"),run:$("vibRun"),stop:$("vibStop"),analyze:$("vibAnalyze"),apply:$("vibApply"),save:$("vibSave"),validation:$("vibValidate"),filterReset:$("vibFilterReset"),reset:$("vibReset"),export:$("vibExport")};
 const secs=a=>(a.length/FS).toFixed(1);
