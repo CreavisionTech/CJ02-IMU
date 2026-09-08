@@ -11,11 +11,12 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/cj02-imu-product.jpg" width="720" alt="CJ02-IMU 实物与一元硬币的大小对比，展示板载元件、接口和安装孔">
+  <img src="docs/images/cj02-imu-size-front.png" width="55%" alt="CJ02-IMU 与一元硬币正面尺寸对比">
+  <img src="docs/images/cj02-imu-size-perspective.png" width="42%" alt="CJ02-IMU 与一元硬币立体尺寸对比">
 </p>
 
 <p align="center">
-  <sub>CJ02-IMU 实物展示 · 与一元硬币对比</sub>
+  <sub>正视尺寸对比&nbsp;&nbsp;·&nbsp;&nbsp;立体视角展示</sub>
 </p>
 
 <p align="center">
