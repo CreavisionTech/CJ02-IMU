@@ -1,0 +1,488 @@
+/*!
+ * \file  cj02_imu.h
+ * \brief CJ02-IMU SDK — header-only C++ library for reading IMU data.
+ *
+ * Parses the CJ02-IMU binary serial protocol (0xAA raw, 0xAB attitude,
+ * 0xAD sync event, 0xAC config) and provides callbacks for each frame type.
+ *
+ * Usage:
+ *   ```cpp
+ *   #include "cj02_imu.h"
+ *   CJ02IMU imu;
+ *   imu.onAttitude([](const AttitudeFrame& f) {
+ *       printf("roll=%.2f pitch=%.2f yaw=%.2f\n", f.roll, f.pitch, f.yaw);
+ *   });
+ *   imu.open("/dev/ttyUSB0", 460800);   // or "COM11" on Windows
+ *   imu.run();                           // blocking loop
+ *   ```
+ *
+ * License: MIT
+ */
+
+#ifndef CJ02_IMU_H
+#define CJ02_IMU_H
+
+#include <cstdint>
+#include <cstring>
+#include <functional>
+#include <vector>
+#include <string>
+#include <atomic>
+#include <cctype>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <errno.h>
+#include <cstdlib>
+#endif
+
+// usleep fallback for Windows
+#ifdef _WIN32
+#define usleep(us) Sleep((us) / 1000)
+#endif
+
+namespace cj02 {
+
+static constexpr float ACCEL_LSB_PER_G = 2048.0f; // Current firmware: +/-16 g.
+
+// ============================================================
+// Frame structures (mirrors the on-wire format)
+// ============================================================
+
+#pragma pack(push, 1)
+
+struct RawFrame {
+    static constexpr uint8_t SYNC = 0xAA;
+    static constexpr int SIZE = 16;
+
+    uint8_t  sync;        // 0xAA
+    int16_t  acc[3];      // ±16g, 2048 LSB/g
+    int16_t  gyr[3];      // ±2000°/s, 16.4 LSB/(°/s)
+    uint16_t seq;         // frame sequence
+    uint8_t  checksum;    // XOR of bytes 1..14
+
+    float accX_mg() const { return acc[0] * 1000.0f / ACCEL_LSB_PER_G; }
+    float accY_mg() const { return acc[1] * 1000.0f / ACCEL_LSB_PER_G; }
+    float accZ_mg() const { return acc[2] * 1000.0f / ACCEL_LSB_PER_G; }
+    float gyrX_dps() const { return gyr[0] / 16.4f; }
+    float gyrY_dps() const { return gyr[1] / 16.4f; }
+    float gyrZ_dps() const { return gyr[2] / 16.4f; }
+};
+
+struct AttitudeFrame {
+    static constexpr uint8_t SYNC = 0xAB;
+    static constexpr int SIZE = 20;
+
+    uint8_t  sync;        // 0xAB
+    float    roll;        // degrees, -180..180
+    float    pitch;       // degrees, -90..90
+    float    yaw;         // degrees, -180..180
+    uint32_t seq;         // attitude sequence
+    uint8_t  mode;        // 0=INIT, 1=RUN, 2=NO_ACC, 3=REJECT
+    uint8_t  flags;       // bit0=accel_used, bit1=zaru_used, bit2=is_static
+    uint8_t  checksum;    // XOR of bytes 1..18
+
+    bool accelUsed() const { return flags & 0x01; }
+    bool zaruUsed()  const { return flags & 0x02; }
+    bool isStatic()  const { return flags & 0x04; }
+    const char* modeName() const {
+        switch (mode) {
+            case 0: return "INIT";
+            case 1: return "RUN";
+            case 2: return "NO_ACC";
+            case 3: return "REJECT";
+            default: return "UNKNOWN";
+        }
+    }
+};
+
+struct SyncEventFrame {
+    static constexpr uint8_t SYNC = 0xAD;
+    static constexpr int SIZE = 22;
+
+    uint8_t  sync;        // 0xAD
+    uint32_t triggerSeq;  // 1600Hz sample counter at trigger
+    float    roll;        // degrees at trigger
+    float    pitch;
+    float    yaw;
+    uint32_t attSeq;      // attitude frame seq at trigger
+    uint8_t  checksum;    // XOR of bytes 1..20
+};
+
+#pragma pack(pop)
+
+// ============================================================
+// Config structure (80 bytes payload)
+// ============================================================
+
+struct Config {
+    float gyro_tilt_std_1s_deg;
+    float sigma_gyro_bias;
+    float gyro_scale_factor_error;
+    float accel_variance_base;
+    float accel_g_3sigma;
+    float accel_release_tau;
+    float nis_reject;
+    float nis_inflate_gamma;
+    float zaru_variance;
+    float static_gyro_threshold;
+    float static_accel_rel_std_thresh;
+    float motion_gyro_full;
+    float motion_accel_full;
+    float initialization_tilt_seconds;
+    float initial_attitude_variance;
+    float initial_bias_variance;
+    float maximum_delta_seconds;
+    uint32_t zaru_static_frames;
+    uint32_t motion_window_length;
+    uint16_t trigger_divider;
+    uint16_t trigger_duty;
+};
+static_assert(sizeof(Config) == 80, "Config must be 80 bytes");
+
+struct FilterConfig {
+    uint32_t flags = 0;
+    uint32_t output_rate_hz = 800;
+    uint32_t baud_rate = 460800;
+    float accel_lpf_hz = 200.0f;
+    float gyro_lpf_hz = 200.0f;
+    float accel_notch_hz[3] = {100,150,200};
+    float accel_notch_q[3] = {10,10,10};
+    float gyro_notch_hz[3] = {100,150,200};
+    float gyro_notch_q[3] = {10,10,10};
+};
+static_assert(sizeof(FilterConfig) == 68, "FilterConfig must be 68 bytes");
+
+// ============================================================
+// Serial port abstraction
+// ============================================================
+
+class SerialPort {
+public:
+    static std::string devicePath(const std::string& port) {
+#ifdef _WIN32
+        if (port.size() > 3 &&
+            std::toupper(static_cast<unsigned char>(port[0])) == 'C' &&
+            std::toupper(static_cast<unsigned char>(port[1])) == 'O' &&
+            std::toupper(static_cast<unsigned char>(port[2])) == 'M') {
+            for (size_t i = 3; i < port.size(); ++i)
+                if (!std::isdigit(static_cast<unsigned char>(port[i]))) return port;
+            return std::string("\\\\.\\COM") + port.substr(3);
+        }
+#endif
+        return port;  // Includes already-prefixed Windows device paths.
+    }
+
+    SerialPort() {
+#ifdef _WIN32
+        handle_ = INVALID_HANDLE_VALUE;
+#else
+        fd_ = -1;
+#endif
+    }
+    ~SerialPort() { close(); }
+
+    bool open(const std::string& port, int baud) {
+#ifdef _WIN32
+        const std::string path = devicePath(port);
+        handle_ = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                              0, NULL, OPEN_EXISTING, 0, NULL);
+        if (handle_ == INVALID_HANDLE_VALUE) return false;
+
+        DCB dcb = {};
+        dcb.DCBlength = sizeof(DCB);
+        if (!GetCommState(handle_, &dcb)) { close(); return false; }
+        dcb.BaudRate = baud;
+        dcb.ByteSize = 8;
+        dcb.StopBits = ONESTOPBIT;
+        dcb.Parity   = NOPARITY;
+        if (!SetCommState(handle_, &dcb)) { close(); return false; }
+
+        COMMTIMEOUTS to = {};
+        to.ReadIntervalTimeout         = 50;
+        to.ReadTotalTimeoutConstant    = 50;
+        to.ReadTotalTimeoutMultiplier  = 10;
+        to.WriteTotalTimeoutConstant   = 50;
+        to.WriteTotalTimeoutMultiplier = 10;
+        SetCommTimeouts(handle_, &to);
+        return true;
+#else
+        fd_ = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+        if (fd_ < 0) return false;
+
+        termios tty = {};
+        if (tcgetattr(fd_, &tty) != 0) { close(); return false; }
+
+        speed_t speed;
+        if (baud == 460800) speed = B460800;
+#ifdef B2000000
+        else if (baud == 2000000) speed = B2000000;
+#endif
+        else { close(); return false; }
+        cfsetospeed(&tty, speed);
+        cfsetispeed(&tty, speed);
+
+        tty.c_cflag &= ~PARENB;
+        tty.c_cflag &= ~CSTOPB;
+        tty.c_cflag &= ~CSIZE;
+        tty.c_cflag |= CS8;
+        tty.c_cflag &= ~CRTSCTS;
+        tty.c_cflag |= CREAD | CLOCAL;
+        tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+        tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+        tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+        tty.c_oflag &= ~OPOST;
+        tty.c_cc[VMIN] = 0;
+        tty.c_cc[VTIME] = 1;  // 100ms timeout
+
+        if (tcsetattr(fd_, TCSANOW, &tty) != 0) { close(); return false; }
+
+        // Set to blocking mode
+        int flags = fcntl(fd_, F_GETFL, 0);
+        fcntl(fd_, F_SETFL, flags & ~O_NONBLOCK);
+        return true;
+#endif
+    }
+
+    void close() {
+#ifdef _WIN32
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+#else
+        if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+#endif
+    }
+
+    bool isOpen() const {
+#ifdef _WIN32
+        return handle_ != INVALID_HANDLE_VALUE;
+#else
+        return fd_ >= 0;
+#endif
+    }
+
+    int read(uint8_t* buf, int len) {
+#ifdef _WIN32
+        DWORD bytesRead = 0;
+        if (!ReadFile(handle_, buf, len, &bytesRead, NULL)) return -1;
+        return (int)bytesRead;
+#else
+        return (int)::read(fd_, buf, len);
+#endif
+    }
+
+    int write(const uint8_t* buf, int len) {
+#ifdef _WIN32
+        DWORD bytesWritten = 0;
+        if (!WriteFile(handle_, buf, len, &bytesWritten, NULL)) return -1;
+        return (int)bytesWritten;
+#else
+        return (int)::write(fd_, buf, len);
+#endif
+    }
+
+private:
+#ifdef _WIN32
+    HANDLE handle_;
+#else
+    int fd_;
+#endif
+};
+
+// ============================================================
+// Main IMU class
+// ============================================================
+
+class CJ02IMU {
+public:
+    CJ02IMU() : running_(false), framesGood_(0), framesBad_(0) {}
+    ~CJ02IMU() { stop(); }
+
+    // Callbacks
+    std::function<void(const RawFrame&)>       onRaw;
+    std::function<void(const AttitudeFrame&)>  onAttitude;
+    std::function<void(const SyncEventFrame&)> onSyncEvent;
+    std::function<void(const Config&)>         onConfig;
+    std::function<void(const FilterConfig&)>   onFilterConfig;
+    // Called for every command reply; true means the device returned OK.
+    std::function<void(uint8_t, bool)>          onConfigReply;
+
+    bool open(const std::string& port, int baud = 460800) {
+        return serial_.open(port, baud);
+    }
+
+    SerialPort& getSerialPort() { return serial_; }
+
+    void close() { stop(); serial_.close(); }
+
+    // Blocking read loop. Call from your main thread or a worker thread.
+    void run() {
+        running_ = true;
+        uint8_t buf[4096];
+        while (running_) {
+            int n = serial_.read(buf, sizeof(buf));
+            if (n > 0) {
+                feed(buf, n);
+            } else if (n < 0) {
+                break;  // error
+            }
+        }
+        running_ = false;
+    }
+
+    void stop() { running_ = false; }
+    bool isRunning() const { return running_; }
+
+    // Feed raw bytes (for integration with your own I/O loop)
+    void feed(const uint8_t* data, int len) {
+        buffer_.insert(buffer_.end(), data, data + len);
+        parseBuffer();
+    }
+
+    // Statistics
+    uint32_t goodFrames() const { return framesGood_; }
+    uint32_t badFrames()  const { return framesBad_; }
+
+    // Config commands: return write success only. Wait for onConfigReply
+    // before sending another command; keep run()/feed() active to receive it.
+    bool getConfig() {
+        uint8_t pkt[4] = {0xAC, 0x01, 0x00, 0x01};
+        pkt[3] = 0x01 ^ 0x00;  // cmd ^ len
+        return serial_.write(pkt, 4) == 4;
+    }
+
+    bool setConfig(const Config& cfg) {
+        uint8_t pkt[3 + 80 + 1];
+        pkt[0] = 0xAC; pkt[1] = 0x02; pkt[2] = 80;
+        memcpy(pkt + 3, &cfg, 80);
+        uint8_t xor_v = pkt[1] ^ pkt[2];
+        for (int i = 0; i < 80; i++) xor_v ^= pkt[3 + i];
+        pkt[83] = xor_v;
+        return serial_.write(pkt, 84) == 84;
+    }
+
+    bool resetConfig() {
+        uint8_t pkt[4] = {0xAC, 0x03, 0x00, 0x00};
+        pkt[3] = 0x03 ^ 0x00;
+        return serial_.write(pkt, 4) == 4;
+    }
+
+    bool getFilterConfig() { return sendCommand(0x04, nullptr, 0); }
+    bool setFilterTemporary(const FilterConfig& cfg) {
+        return sendCommand(0x05, reinterpret_cast<const uint8_t*>(&cfg), sizeof(cfg));
+    }
+    bool saveFilterConfig() { return sendCommand(0x06, nullptr, 0); }
+    bool disableFilters() { return sendCommand(0x07, nullptr, 0); }
+    bool enterVibrationMode() { return sendCommand(0x08, nullptr, 0); }
+    bool exitVibrationMode() { return sendCommand(0x09, nullptr, 0); }
+
+private:
+    SerialPort serial_;
+    std::vector<uint8_t> buffer_;
+    std::atomic<bool> running_;
+    uint32_t framesGood_;
+    uint32_t framesBad_;
+
+    bool sendCommand(uint8_t cmd, const uint8_t* payload, uint8_t len) {
+        std::vector<uint8_t> pkt(4U + len);
+        pkt[0]=0xAC;pkt[1]=cmd;pkt[2]=len;
+        uint8_t sum=cmd^len;
+        for(uint8_t i=0;i<len;++i){pkt[3+i]=payload[i];sum^=payload[i];}
+        pkt[3+len]=sum;
+        return serial_.write(pkt.data(), static_cast<int>(pkt.size())) == static_cast<int>(pkt.size());
+    }
+
+    void parseBuffer() {
+        while (!buffer_.empty()) {
+            uint8_t sync = buffer_[0];
+            int frameLen = 0;
+
+            switch (sync) {
+                case RawFrame::SYNC:       frameLen = RawFrame::SIZE;       break;
+                case AttitudeFrame::SYNC:  frameLen = AttitudeFrame::SIZE;  break;
+                case SyncEventFrame::SYNC: frameLen = SyncEventFrame::SIZE; break;
+                case 0xAC: {
+                    if (buffer_.size() < 3) return;
+                    frameLen = 3 + buffer_[2] + 1;
+                    break;
+                }
+                default:
+                    buffer_.erase(buffer_.begin());
+                    continue;
+            }
+
+            if ((int)buffer_.size() < frameLen) return;
+
+            bool ok = false;
+            if (sync == RawFrame::SYNC) {
+                RawFrame f;
+                memcpy(&f, buffer_.data(), RawFrame::SIZE);
+                ok = checkXor(buffer_.data(), RawFrame::SIZE);
+                if (ok && onRaw) onRaw(f);
+            } else if (sync == AttitudeFrame::SYNC) {
+                AttitudeFrame f;
+                memcpy(&f, buffer_.data(), AttitudeFrame::SIZE);
+                ok = checkXor(buffer_.data(), AttitudeFrame::SIZE);
+                if (ok && onAttitude) onAttitude(f);
+            } else if (sync == SyncEventFrame::SYNC) {
+                SyncEventFrame f;
+                memcpy(&f, buffer_.data(), SyncEventFrame::SIZE);
+                ok = checkXor(buffer_.data(), SyncEventFrame::SIZE);
+                if (ok && onSyncEvent) onSyncEvent(f);
+            } else if (sync == 0xAC) {
+                ok = handleConfigReply(buffer_.data(), frameLen);
+            }
+
+            if (ok) {
+                framesGood_++;
+                buffer_.erase(buffer_.begin(), buffer_.begin() + frameLen);
+            } else {
+                framesBad_++;
+                // Only advance 1 byte to re-sync quickly
+                buffer_.erase(buffer_.begin());
+            }
+        }
+    }
+
+    static bool checkXor(const uint8_t* data, int len) {
+        uint8_t xor_v = 0;
+        for (int i = 1; i < len - 1; i++) xor_v ^= data[i];
+        return xor_v == data[len - 1];
+    }
+
+    bool handleConfigReply(const uint8_t* data, int len) {
+        if (len < 5) return false;
+        uint8_t cmd = data[1];
+        uint8_t payloadLen = data[2];
+
+        // verify checksum
+        uint8_t xor_v = 0;
+        for (int i = 1; i < len - 1; i++) xor_v ^= data[i];
+        if (xor_v != data[len - 1]) return false;
+
+        if (payloadLen < 1) return false;
+        if (onConfigReply) onConfigReply(cmd, data[3] == 0x01);
+
+        if (cmd == 0x01 && payloadLen == 81 && data[3] == 0x01) {
+            // GET_CONFIG reply: [status=1] + 80 bytes config
+            Config cfg;
+            memcpy(&cfg, data + 4, 80);
+            if (onConfig) onConfig(cfg);
+        } else if (cmd == 0x04 && payloadLen == 69 && data[3] == 0x01) {
+            FilterConfig cfg;
+            memcpy(&cfg, data + 4, sizeof(cfg));
+            if (onFilterConfig) onFilterConfig(cfg);
+        }
+        return true;
+    }
+};
+
+} // namespace cj02
+
+#endif // CJ02_IMU_H

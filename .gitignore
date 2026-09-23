@@ -1,0 +1,30 @@
+# Build artifacts
+sdk/cpp/build/
+sdk/python/__pycache__/
+sdk/python/*.egg-info/
+ros/**/build/
+ros/**/devel/
+ros2/**/build/
+ros2/**/install/
+ros2/**/log/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
+*.log
